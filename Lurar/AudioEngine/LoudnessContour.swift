@@ -70,9 +70,11 @@ enum LoudnessContour {
     ///   Lp = (10/αf) · log10(Af) − Lu + 94
     static func splForPhon(phon: Double, frequency: Double) -> Double {
         let p = interpolate(frequency: frequency)
-        let af = 4.47e-3 * (pow(10.0, 0.025 * phon) - 1.15)
+        let safePhon = max(20.0, phon)
+        let af = 4.47e-3 * (pow(10.0, 0.025 * safePhon) - 1.15)
             + pow(0.4 * pow(10.0, (p.tf + p.lu) / 10.0 - 9.0), p.alpha)
-        return (10.0 / p.alpha) * log10(af) - p.lu + 94.0
+        let safeAf = max(1e-12, af)
+        return (10.0 / p.alpha) * log10(safeAf) - p.lu + 94.0
     }
 
     /// Compensation curve in dB at `frequency`, normalised at 1 kHz (returns 0

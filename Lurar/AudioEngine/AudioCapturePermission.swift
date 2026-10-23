@@ -53,6 +53,20 @@ enum AudioCapturePermission {
         }
     }
 
+    /// Asynchronous helper for UI actions. Returns true if authorized. Does not block the main thread.
+    static func ensureAuthorizedAsync() async -> Bool {
+        switch preflight() {
+        case .authorized:
+            return true
+        case .denied, .unknown:
+            return await withCheckedContinuation { continuation in
+                request { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        }
+    }
+
     /// Synchronous helper for engine startup. Returns true if we are (or become)
     /// authorized. Blocks the calling thread on the prompt — only call from a
     /// background queue if blocking the main thread would freeze the UI.

@@ -42,7 +42,7 @@ enum EQCurveGeometry {
 
         init(band: EQBand) {
             let fs = EQCurveGeometry.referenceSampleRate
-            let f0 = Double(band.frequency)
+            let f0 = max(10.0, min(fs * 0.49, Double(band.frequency)))
             let gainDB = Double(band.gain)
             let Q = max(Double(band.q), 0.001)
             let A = pow(10.0, gainDB / 40.0)
@@ -86,18 +86,21 @@ enum EQCurveGeometry {
             let numSq = b0 * b0 + b1 * b1 + b2 * b2 + 2 * (b0 * b1 + b1 * b2) * cosw + 2 * b0 * b2 * cos2w
             let denSq = a0 * a0 + a1 * a1 + a2 * a2 + 2 * (a0 * a1 + a1 * a2) * cosw + 2 * a0 * a2 * cos2w
 
-            guard denSq > 0 else { return 0 }
-            return 10 * log10(numSq / denSq)
+            guard denSq > 1e-12, numSq > 1e-12 else { return -120.0 }
+            let val = 10 * log10(numSq / denSq)
+            return val.isFinite ? val : 0.0
         }
     }
 
     // MARK: - Coordinate mapping
 
     static func xPos(forFreq f: Double, in size: CGSize) -> CGFloat {
+        let safeF = max(minFreq, min(maxFreq, f))
         let logMin = log10(minFreq)
         let logMax = log10(maxFreq)
-        let t = (log10(f) - logMin) / (logMax - logMin)
-        return CGFloat(t) * size.width
+        let t = (log10(safeF) - logMin) / (logMax - logMin)
+        let clampedT = max(0.0, min(1.0, t))
+        return CGFloat(clampedT) * size.width
     }
 
     static func yPos(forDB db: Double, minDB: Double, maxDB: Double, in size: CGSize) -> CGFloat {

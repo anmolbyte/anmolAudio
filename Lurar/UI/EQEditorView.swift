@@ -127,32 +127,38 @@ struct EQEditorView: View {
             return Array(repeating: nil, count: SlotMath.count)
         }
 
+        let countToPlace = min(sortedIndices.count, SlotMath.count)
+        let indicesToPlace = Array(sortedIndices.prefix(countToPlace))
+
         // Pass 1: each band wants its preferred zone, but slots must strictly
         // increase to keep frequency ordering left-to-right.
         var placements: [Int] = []
-        placements.reserveCapacity(sortedIndices.count)
-        for bandIdx in sortedIndices {
+        placements.reserveCapacity(countToPlace)
+        for bandIdx in indicesToPlace {
             let preferred = SlotMath.zoneIndex(for: draft.bands[bandIdx].frequency)
             let minSlot = (placements.last ?? -1) + 1
             placements.append(max(preferred, minSlot))
         }
 
-        // Pass 2: if the rightmost placement overshot the last slot, shift
-        // everything left by that overflow. Re-enforce strict increase in
-        // case the shift collapses earlier placements onto each other.
-        if let last = placements.last, last >= SlotMath.count {
-            let overflow = last - (SlotMath.count - 1)
-            for i in placements.indices {
-                placements[i] = max(0, placements[i] - overflow)
+        // Pass 2: backward pass to pull back any overshoot beyond SlotMath.count - 1
+        placements[countToPlace - 1] = min(placements[countToPlace - 1], SlotMath.count - 1)
+        if countToPlace > 1 {
+            for i in (0..<(countToPlace - 1)).reversed() {
+                placements[i] = min(placements[i], placements[i + 1] - 1)
             }
-            for i in 1..<placements.count where placements[i] <= placements[i - 1] {
+        }
+
+        // Pass 3: forward pass to ensure non-negative slots
+        placements[0] = max(0, placements[0])
+        if countToPlace > 1 {
+            for i in 1..<countToPlace where placements[i] <= placements[i - 1] {
                 placements[i] = placements[i - 1] + 1
             }
         }
 
         var slots: [Int?] = Array(repeating: nil, count: SlotMath.count)
-        for (rank, slot) in placements.enumerated() where slot < SlotMath.count {
-            slots[slot] = sortedIndices[rank]
+        for (rank, slot) in placements.enumerated() where slot >= 0 && slot < SlotMath.count {
+            slots[slot] = indicesToPlace[rank]
         }
         return slots
     }
@@ -343,8 +349,13 @@ struct EQEditorView: View {
             hydrateParentIfNeeded()
         }
         .onChange(of: engine.currentPreset) { _, new in
-            // Engine changed preset externally (menu bar). Mirror into the editor.
-            if let new, new.id != draft.id { draft = new }
+            // Engine changed preset externally (menu bar). Mirror into the editor if not editing.
+            guard let new, new.id != draft.id else { return }
+            if isDirty && !isBuiltIn {
+                pendingSwitchTargetID = new.id
+            } else {
+                draft = new
+            }
         }
         .onChange(of: draft.parentRef) { _, _ in hydrateParentIfNeeded() }
         .onChange(of: hostWindow) { _, win in

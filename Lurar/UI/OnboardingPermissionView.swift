@@ -583,12 +583,15 @@ struct OnboardingPermissionView: View {
     /// denied mode in place rather than dismissing — otherwise the user is
     /// stranded with the engine still off and no on-screen guidance.
     private func continueFromInitial() {
-        if AudioCapturePermission.ensureAuthorized() {
-            ensureEngineRunning()
-            mode = .setup
-            triggerAutoApplyIfNeeded()
-        } else {
-            mode = .denied
+        Task { @MainActor in
+            let authorized = await AudioCapturePermission.ensureAuthorizedAsync()
+            if authorized {
+                ensureEngineRunning()
+                mode = .setup
+                triggerAutoApplyIfNeeded()
+            } else {
+                mode = .denied
+            }
         }
     }
 
@@ -599,12 +602,15 @@ struct OnboardingPermissionView: View {
     /// which silently returns true when the OS would actually permit the
     /// capture call. Stays on the denied screen with a hint if it doesn't.
     private func retryStart() {
-        if AudioCapturePermission.ensureAuthorized() {
-            ensureEngineRunning()
-            mode = .setup
-            triggerAutoApplyIfNeeded()
-        } else {
-            retryFailed = true
+        Task { @MainActor in
+            let authorized = await AudioCapturePermission.ensureAuthorizedAsync()
+            if authorized {
+                ensureEngineRunning()
+                mode = .setup
+                triggerAutoApplyIfNeeded()
+            } else {
+                retryFailed = true
+            }
         }
     }
 

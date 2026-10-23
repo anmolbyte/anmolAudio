@@ -73,8 +73,9 @@ enum BiquadCoefficients {
         q: Float,
         sampleRate: Double
     ) -> (Double, Double, Double, Double, Double) {
+        guard sampleRate > 20.0 else { return identity }
         let nyquist = sampleRate * 0.5
-        let f = min(max(Double(frequency), 10.0), nyquist - 1.0)
+        let f = min(max(Double(frequency), 10.0), max(10.0, nyquist - 1.0))
         let A = pow(10.0, Double(gainDB) / 40.0)
         let w0 = 2.0 * .pi * f / sampleRate
         let cosW0 = cos(w0)
@@ -127,6 +128,7 @@ enum BiquadCoefficients {
         _ b0: Double, _ b1: Double, _ b2: Double,
         _ a0: Double, _ a1: Double, _ a2: Double
     ) -> (Double, Double, Double, Double, Double) {
+        guard abs(a0) > 1e-12 else { return identity }
         let inv = 1.0 / a0
         return (b0 * inv, b1 * inv, b2 * inv, a1 * inv, a2 * inv)
     }

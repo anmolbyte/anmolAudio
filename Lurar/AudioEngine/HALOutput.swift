@@ -14,12 +14,25 @@ final class HALOutput {
     private var au: AudioUnit?
     let ringBuffer: StereoFloatRingBuffer
     private(set) var deviceID: AudioDeviceID = 0
+    private let scratchCapacity: Int = 4096
+    private let tmpL: UnsafeMutablePointer<Float>
+    private let tmpR: UnsafeMutablePointer<Float>
 
     init(ringBuffer: StereoFloatRingBuffer) {
         self.ringBuffer = ringBuffer
+        self.tmpL = .allocate(capacity: scratchCapacity)
+        self.tmpR = .allocate(capacity: scratchCapacity)
+        tmpL.initialize(repeating: 0, count: scratchCapacity)
+        tmpR.initialize(repeating: 0, count: scratchCapacity)
     }
 
-    deinit { try? stop() }
+    deinit {
+        try? stop()
+        tmpL.deinitialize(count: scratchCapacity)
+        tmpR.deinitialize(count: scratchCapacity)
+        tmpL.deallocate()
+        tmpR.deallocate()
+    }
 
     func start(deviceID: AudioDeviceID, clientFormat: AVAudioFormat) throws {
         try stop()
@@ -146,15 +159,16 @@ final class HALOutput {
         if abl.count == 1,
            let raw = abl[0].mData {
             let interleaved = raw.assumingMemoryBound(to: Float.self)
-            // Read into a temporary stereo pair, then interleave.
-            let n = Int(numFrames)
-            let tmpL = UnsafeMutablePointer<Float>.allocate(capacity: n)
-            let tmpR = UnsafeMutablePointer<Float>.allocate(capacity: n)
-            defer { tmpL.deallocate(); tmpR.deallocate() }
+            let n = min(Int(numFrames), scratchCapacity)
             ringBuffer.read(left: tmpL, right: tmpR, frames: n)
             for i in 0..<n {
                 interleaved[i * 2] = tmpL[i]
                 interleaved[i * 2 + 1] = tmpR[i]
+            }
+            if n < Int(numFrames) {
+                for i in (n * 2)..<(Int(numFrames) * 2) {
+                    interleaved[i] = 0
+                }
             }
             return noErr
         }

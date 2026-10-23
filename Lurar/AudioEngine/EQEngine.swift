@@ -942,9 +942,10 @@ final class EQEngine: ObservableObject {
         // 150 ms debounce gives HALOutput plenty of callbacks to drain the
         // ramp before the actual teardown starts — by the time we reset the
         // ring buffer, the DAC has been hearing silence for a while.
-        if let sr = activeSampleRate {
-            ringBuffer.setOutputGain(0, rampFrames: Int(Self.fadeOutSeconds * sr))
-        }
+        // Use halSampleRate (or activeSampleRate as fallback) since the ramp
+        // frames are consumed at the HAL output rate.
+        let sr = halSampleRate ?? activeSampleRate ?? 48_000
+        ringBuffer.setOutputGain(0, rampFrames: Int(Self.fadeOutSeconds * sr))
         pendingRestart?.cancel()
         let work = DispatchWorkItem { [weak self] in
             Task { @MainActor in

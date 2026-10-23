@@ -34,7 +34,6 @@ final class PresetStore: ObservableObject {
 
     private(set) var fileURL: URL
     private var fileSource: DispatchSourceFileSystemObject?
-    private var fileDescriptor: Int32 = -1
     private var reloadWorkItem: DispatchWorkItem?
     private var lastKnownHash: Int = 0
 
@@ -584,7 +583,6 @@ final class PresetStore: ObservableObject {
             }
             return
         }
-        fileDescriptor = fd
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .delete, .rename, .extend],
@@ -599,12 +597,8 @@ final class PresetStore: ObservableObject {
             }
             self.scheduleReload()
         }
-        source.setCancelHandler { [weak self] in
-            guard let self else { return }
-            if self.fileDescriptor != -1 {
-                close(self.fileDescriptor)
-                self.fileDescriptor = -1
-            }
+        source.setCancelHandler {
+            close(fd)
         }
         source.resume()
         fileSource = source

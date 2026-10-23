@@ -202,35 +202,66 @@ struct AutoEqClient {
     }
 
     private static func parsePreampLine(_ line: String) -> Float? {
-        guard line.hasPrefix("Preamp:") else { return nil }
-        let value = line.dropFirst("Preamp:".count)
-            .replacingOccurrences(of: "dB", with: "")
-            .trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("preamp:") else { return nil }
+        let value = trimmed.dropFirst("preamp:".count)
+            .replacingOccurrences(of: "dB", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return Float(value)
     }
 
     private static func parseFilterLine(_ line: String) -> EQBand? {
-        guard line.hasPrefix("Filter ") else { return nil }
-        let tokens = line.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        // Layout: ["Filter", "N:", "ON", "TYPE", "Fc", "<hz>", "Hz", "Gain", "<db>", "dB", "Q", "<q>"]
-        guard tokens.count >= 12,
-              tokens[2] == "ON",
-              tokens[4] == "Fc",
-              tokens[7] == "Gain",
-              tokens[10] == "Q",
-              let freq = Float(tokens[5]),
-              let gain = Float(tokens[8]),
-              let q = Float(tokens[11])
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("Filter") else { return nil }
+        let tokens = trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        if tokens.contains(where: { $0.caseInsensitiveCompare("OFF") == .orderedSame }) {
+            return nil
+        }
+        guard let type = extractFilterType(in: tokens),
+              let freq = extractValue(after: "Fc", in: tokens),
+              let gain = extractValue(after: "Gain", in: tokens),
+              let q = extractValue(after: "Q", in: tokens)
         else { return nil }
-        guard let type = filterType(from: tokens[3]) else { return nil }
+        guard freq > 0 else { return nil }
         return EQBand(type: type, frequency: freq, gain: gain, q: q)
     }
 
+    private static func extractValue(after key: String, in tokens: [String]) -> Float? {
+        for (i, token) in tokens.enumerated() {
+            if token.caseInsensitiveCompare(key) == .orderedSame {
+                guard i + 1 < tokens.count else { return nil }
+                let cleaned = tokens[i + 1]
+                    .replacingOccurrences(of: "Hz", with: "", options: .caseInsensitive)
+                    .replacingOccurrences(of: "dB", with: "", options: .caseInsensitive)
+                return Float(cleaned)
+            } else if token.lowercased().hasPrefix(key.lowercased()) {
+                let rest = String(token.dropFirst(key.count))
+                let cleaned = rest
+                    .replacingOccurrences(of: "Hz", with: "", options: .caseInsensitive)
+                    .replacingOccurrences(of: "dB", with: "", options: .caseInsensitive)
+                if let val = Float(cleaned) {
+                    return val
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func extractFilterType(in tokens: [String]) -> EQBand.FilterType? {
+        for token in tokens {
+            if let t = filterType(from: token) {
+                return t
+            }
+        }
+        return nil
+    }
+
     private static func filterType(from token: String) -> EQBand.FilterType? {
-        switch token {
-        case "PK": return .peak
-        case "LSC", "LS": return .lowShelf
-        case "HSC", "HS": return .highShelf
+        let upper = token.uppercased()
+        switch upper {
+        case "PK", "PEAK": return .peak
+        case "LSC", "LS", "LOWSHELF", "LOW_SHELF": return .lowShelf
+        case "HSC", "HS", "HIGHSHELF", "HIGH_SHELF": return .highShelf
         default: return nil
         }
     }

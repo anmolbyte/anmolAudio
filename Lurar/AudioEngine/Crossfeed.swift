@@ -36,22 +36,25 @@ final class Crossfeed {
     // Active parameters (audio thread reads these directly).
     private var activeIntensity: Float = 0
     private var activeCutoff: Float = 700
+    private var activeDelaySamples: Int = 12
 
     // Pending parameters (UI writes under lock; audio thread picks up via trylock).
     private var lock = os_unfair_lock()
     private var pendingIntensity: Float = 0
     private var pendingCutoff: Float = 700
+    private var pendingDelaySamples: Int = 12
     private var pendingDirty: Bool = false
 
     /// Update DSP coefficients for the engine's current sample rate. Safe to call
     /// from the main thread; audio thread will pick up the new delay/cutoff on the
     /// next callback.
     func configure(sampleRate: Double) {
+        guard sampleRate > 0 else { return }
         os_unfair_lock_lock(&lock)
         self.sampleRate = sampleRate
-        self.delaySamples = max(1, min(delayL.count - 1,
-                                       Int((Crossfeed.itdSeconds * sampleRate).rounded())))
-        self.lpAlpha = onePoleAlpha(cutoff: activeCutoff, sampleRate: sampleRate)
+        self.pendingDelaySamples = max(1, min(delayL.count - 1,
+                                              Int((Crossfeed.itdSeconds * sampleRate).rounded())))
+        self.lpAlpha = onePoleAlpha(cutoff: pendingCutoff, sampleRate: sampleRate)
         pendingDirty = true
         os_unfair_lock_unlock(&lock)
     }
@@ -79,6 +82,7 @@ final class Crossfeed {
             if pendingDirty {
                 activeIntensity = pendingIntensity
                 activeCutoff = pendingCutoff
+                activeDelaySamples = pendingDelaySamples
                 lpAlpha = onePoleAlpha(cutoff: activeCutoff, sampleRate: sampleRate)
                 pendingDirty = false
             }
@@ -93,7 +97,7 @@ final class Crossfeed {
         // At intensity 1 this is roughly -3.5 dB on the direct path.
         let trim: Float = 1.0 / (1.0 + 0.5 * mix)
         let alpha = lpAlpha
-        let n = delaySamples
+        let n = activeDelaySamples
         let cap = delayL.count
 
         delayL.withUnsafeMutableBufferPointer { dL in
@@ -135,6 +139,8 @@ final class Crossfeed {
     }
 
     func reset() {
+        os_unfair_lock_lock(&lock)
+        defer { os_unfair_lock_unlock(&lock) }
         for i in 0..<delayL.count { delayL[i] = 0; delayR[i] = 0 }
         delayIdxL = 0
         delayIdxR = 0
@@ -143,8 +149,9 @@ final class Crossfeed {
     }
 
     private func onePoleAlpha(cutoff: Float, sampleRate: Double) -> Float {
+        guard sampleRate > 0 else { return 0.1 }
         let dt = 1.0 / Float(sampleRate)
-        let rc = 1.0 / (2.0 * .pi * cutoff)
+        let rc = 1.0 / (2.0 * .pi * max(cutoff, 1.0))
         return dt / (rc + dt)
     }
 }

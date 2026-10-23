@@ -45,7 +45,9 @@ struct LurarApp: App {
                 presetCatalog: presetCatalog,
                 devicePresetMemory: devicePresetMemory,
                 burnInTracker: burnInTracker,
-                outputVolumeMonitor: outputVolumeMonitor
+                outputVolumeMonitor: outputVolumeMonitor,
+                excludedAppsStore: excludedAppsStore,
+                crossfeedSettings: crossfeedSettings
             )
         }
         .menuBarExtraStyle(.window)
@@ -197,25 +199,12 @@ struct LurarApp: App {
         // Migration is synchronous and one-shot: move any in-file built-ins into the
         // network catalog. The catalog kicks off its own async index refresh in its init.
         store.migrateLegacyBuiltInsIfNeeded(into: _presetCatalog.wrappedValue)
-        // Seed the engine with the persisted crossfeed settings so the first audio
-        // callback (whenever the engine is started) already has the user's params.
-        // When crossfeed is toggled off the engine runs at an effective intensity
-        // of 0 while the stored slider value is preserved.
-        engine.setCrossfeedIntensity(crossfeedSettings.isOn ? crossfeedSettings.intensity : 0)
-        engine.setCrossfeedCutoff(crossfeedSettings.cutoff)
-        // Hand the engine a weak handle to the per-app exclusion list and have it
-        // rebuild the tap whenever the user toggles a row. Without the onChange
-        // wire-up, toggles would only take effect on the next manual engine start.
-        engine.excludedAppsStore = excludedAppsStore
-        excludedAppsStore.onChange = { [weak engine] in
-            engine?.reEnumerateTapTargets()
-        }
         // Note: the global ⌥B hotkey is wired up by `EQEngine.init()` itself,
         // not here. App-level `@StateObject` wrappedValue accesses during init
         // can hit a transient instance that SwiftUI discards before binding the
         // persistent storage, so anything we'd schedule from this scope would
-        // run against a dead engine. The same caveat applies to wiring the
-        // app delegate's engine reference — that happens from
+        // run against a dead engine. The same caveat applies to wiring crossfeed,
+        // excluded apps, and the app delegate's engine reference — that happens from
         // `MenuBarLabel.task` (see `runLaunchCoordinator`'s call site) where
         // the persistent engine is guaranteed.
     }
@@ -271,6 +260,8 @@ private struct MenuBarLabel: View {
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var outputVolumeMonitor: OutputVolumeMonitor
+    @ObservedObject var excludedAppsStore: ExcludedAppsStore
+    @ObservedObject var crossfeedSettings: CrossfeedSettings
 
     @Environment(\.openWindow) private var openWindow
 
@@ -325,6 +316,14 @@ private struct MenuBarLabel: View {
                 outputVolumeMonitor.rebind(to: deviceManager.selectedOutput)
                 guard !didRunLaunchCoordinator else { return }
                 didRunLaunchCoordinator = true
+
+                // Seed the persistent engine with initial crossfeed settings and excluded apps
+                engine.setCrossfeedIntensity(crossfeedSettings.isOn ? crossfeedSettings.intensity : 0)
+                engine.setCrossfeedCutoff(crossfeedSettings.cutoff)
+                engine.excludedAppsStore = excludedAppsStore
+                excludedAppsStore.onChange = { [weak engine] in
+                    engine?.reEnumerateTapTargets()
+                }
 
                 // Wire up onTopologyChange at launch so hardware changes (plug/unplug)
                 // restart or adjust the engine even before the popover has ever been opened.

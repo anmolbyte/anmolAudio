@@ -23,10 +23,12 @@ struct CompetitorParser {
             let typeString = (b["type"] as? String)?.lowercased() ?? "peak"
             
             var filterType: EQBand.FilterType = .peak
-            if typeString.contains("low") || typeString.contains("lsc") || typeString == "highpass" {
+            if typeString.contains("lowshelf") || typeString.contains("low_shelf") || typeString.contains("low shelf") || typeString == "lsc" || typeString == "ls" || (typeString.contains("low") && !typeString.contains("pass")) {
                 filterType = .lowShelf
-            } else if typeString.contains("high") || typeString.contains("hsc") || typeString == "lowpass" {
+            } else if typeString.contains("highshelf") || typeString.contains("high_shelf") || typeString.contains("high shelf") || typeString == "hsc" || typeString == "hs" || (typeString.contains("high") && !typeString.contains("pass")) {
                 filterType = .highShelf
+            } else {
+                filterType = .peak
             }
             
             if freq > 0 {

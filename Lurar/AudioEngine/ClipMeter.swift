@@ -98,6 +98,7 @@ final class ClipMeter {
         vDSP_maxmgv(right, 1, &blockPeakR, vDSP_Length(frames))
 
         let sr = sampleRate
+        guard sr > 0, !sr.isNaN else { return }
         let blockSeconds = Double(frames) / sr
         // exp(-Δt/τ) for the per-block envelope decay.
         let decay = Float(exp(-blockSeconds / Self.releaseTimeConstant))
@@ -111,7 +112,7 @@ final class ClipMeter {
             framesSinceClip = 0
         } else if clippedLatched {
             framesSinceClip &+= UInt64(frames)
-            let holdFrames = UInt64(Self.clipHoldSeconds * sr)
+            let holdFrames = UInt64(max(0.0, Self.clipHoldSeconds * sr))
             if framesSinceClip >= holdFrames {
                 clippedLatched = false
             }

@@ -24,7 +24,7 @@ final class DeviceManager: ObservableObject {
     private let preferences: OutputSelectionPreferences
     private var topologyListener: DeviceChangeListener?
     private var defaultOutputListener: DefaultOutputDeviceListener?
-    private var isSyncingSystemDefault = false
+    private var pendingSyncDeviceID: AudioObjectID?
     /// UID snapshot of the last visible device list — used to decide
     /// whether a topology notification actually changed anything the user
     /// cares about, or whether it was just our private tap aggregate
@@ -105,21 +105,28 @@ final class DeviceManager: ObservableObject {
 
     private func syncSystemDefaultIfNeeded(to output: AudioDevice) {
         guard let currentDefault = CoreAudioDevices.defaultOutput(), currentDefault.id != output.id else { return }
-        isSyncingSystemDefault = true
-        defer { isSyncingSystemDefault = false }
+        pendingSyncDeviceID = output.id
         do {
             try CoreAudioDevices.setDefaultOutput(id: output.id)
             log.info("Synced macOS default output to \(output.name, privacy: .public)")
         } catch {
+            pendingSyncDeviceID = nil
             log.error("Failed to sync macOS default output to \(output.name, privacy: .public): \(String(describing: error))")
         }
     }
 
     private func handleSystemDefaultChanged() {
-        guard !isSyncingSystemDefault else { return }
         guard let newDefault = CoreAudioDevices.defaultOutput() else {
             log.info("System default changed — no default device available")
             return
+        }
+        if let pending = pendingSyncDeviceID {
+            if pending == newDefault.id {
+                pendingSyncDeviceID = nil
+                log.info("Ignoring echo of our own default output sync to \(newDefault.name, privacy: .public)")
+                return
+            }
+            pendingSyncDeviceID = nil
         }
         // CoreAudio fires the default-change and device-list notifications
         // independently — if a brand-new device (AirPods) just became default

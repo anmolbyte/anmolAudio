@@ -251,11 +251,27 @@ final class PresetCatalog: ObservableObject {
 
     private func readPresetCache(slug: String) -> EQPreset? {
         let url = presetCacheURL(slug: slug)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(EQPreset.self, from: data)
+        if let data = try? Data(contentsOf: url),
+           let preset = try? JSONDecoder().decode(EQPreset.self, from: data) {
+            return preset
+        }
+        // Fall back to legacy filename if it exists
+        let legacyURL = legacyPresetCacheURL(slug: slug)
+        if let data = try? Data(contentsOf: legacyURL),
+           let preset = try? JSONDecoder().decode(EQPreset.self, from: data) {
+            writePresetCache(preset, slug: slug)
+            try? FileManager.default.removeItem(at: legacyURL)
+            return preset
+        }
+        return nil
     }
 
     private func presetCacheURL(slug: String) -> URL {
+        let uuid = CatalogEntry.deterministicID(slug: slug).uuidString
+        return presetsCacheDirectory.appendingPathComponent("\(uuid).json")
+    }
+
+    private func legacyPresetCacheURL(slug: String) -> URL {
         let safe = slug
             .replacingOccurrences(of: "/", with: "__")
             .replacingOccurrences(of: ":", with: "_")

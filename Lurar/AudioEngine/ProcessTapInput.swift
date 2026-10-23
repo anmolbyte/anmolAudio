@@ -40,13 +40,25 @@ final class ProcessTapInput {
     private var frameHandler: FrameHandler?
 
     /// Per-channel scratch used to deinterleave the tap's interleaved buffer for the
-    /// EQ processor (which expects two separate Float32 channel buffers).
-    private var leftScratch: UnsafeMutablePointer<Float>?
-    private var rightScratch: UnsafeMutablePointer<Float>?
-    private var scratchCapacityFrames: Int = 0
-    private let maxFrames: Int = 4096
+    /// EQ processor (which expects two separate Float32 channel buffers). Sized for worst-case bursts.
+    private let leftScratch: UnsafeMutablePointer<Float>
+    private let rightScratch: UnsafeMutablePointer<Float>
+    private let scratchCapacityFrames: Int = 32_768
 
-    deinit { try? stop() }
+    init() {
+        leftScratch = .allocate(capacity: scratchCapacityFrames)
+        rightScratch = .allocate(capacity: scratchCapacityFrames)
+        leftScratch.initialize(repeating: 0, count: scratchCapacityFrames)
+        rightScratch.initialize(repeating: 0, count: scratchCapacityFrames)
+    }
+
+    deinit {
+        try? stop()
+        leftScratch.deinitialize(count: scratchCapacityFrames)
+        rightScratch.deinitialize(count: scratchCapacityFrames)
+        leftScratch.deallocate()
+        rightScratch.deallocate()
+    }
 
     // MARK: - Lifecycle
 
@@ -163,7 +175,6 @@ final class ProcessTapInput {
         try stopIOProc()
 
         self.frameHandler = frameHandler
-        allocateScratch(maxFrames: maxFrames)
 
         var newProcID: AudioDeviceIOProcID?
         let createStatus = AudioDeviceCreateIOProcIDWithBlock(
@@ -203,7 +214,6 @@ final class ProcessTapInput {
         }
         procID = nil
         frameHandler = nil
-        freeScratch()
     }
 
     private func teardownTapAndAggregate() throws {
@@ -223,23 +233,6 @@ final class ProcessTapInput {
             }
             tapID = 0
         }
-    }
-
-    // MARK: - Scratch buffer management
-
-    private func allocateScratch(maxFrames: Int) {
-        freeScratch()
-        leftScratch = .allocate(capacity: maxFrames)
-        rightScratch = .allocate(capacity: maxFrames)
-        leftScratch!.initialize(repeating: 0, count: maxFrames)
-        rightScratch!.initialize(repeating: 0, count: maxFrames)
-        scratchCapacityFrames = maxFrames
-    }
-
-    private func freeScratch() {
-        if let p = leftScratch { p.deallocate(); leftScratch = nil }
-        if let p = rightScratch { p.deallocate(); rightScratch = nil }
-        scratchCapacityFrames = 0
     }
 
     // MARK: - Audio thread
@@ -268,7 +261,9 @@ final class ProcessTapInput {
            abl[start + 1].mNumberChannels == 1,
            let leftRaw = abl[start].mData,
            let rightRaw = abl[start + 1].mData {
-            let frames = Int(abl[start].mDataByteSize) / MemoryLayout<Float>.size
+            let leftBytes = Int(abl[start].mDataByteSize)
+            let rightBytes = Int(abl[start + 1].mDataByteSize)
+            let frames = min(leftBytes, rightBytes) / MemoryLayout<Float>.size
             guard frames > 0 else { return }
             handler(leftRaw.assumingMemoryBound(to: Float.self),
                     rightRaw.assumingMemoryBound(to: Float.self),
@@ -277,9 +272,9 @@ final class ProcessTapInput {
         }
 
         // Interleaved tap: one buffer carrying N channels. Deinterleave into scratch.
-        if let raw = abl[start].mData,
-           let l = leftScratch,
-           let r = rightScratch {
+        if let raw = abl[start].mData {
+            let l = leftScratch
+            let r = rightScratch
             let channels = Int(abl[start].mNumberChannels)
             let totalFloats = Int(abl[start].mDataByteSize) / MemoryLayout<Float>.size
             let frames = channels > 0 ? totalFloats / channels : 0

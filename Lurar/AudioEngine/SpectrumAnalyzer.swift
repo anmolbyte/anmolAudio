@@ -116,7 +116,7 @@ final class SpectrumAnalyzer {
                         // Pack the windowed real samples into split-complex form, run the
                         // in-place radix-2 real FFT, then compute per-bin magnitudes.
                         winBuf.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: halfN) { complexPtr in
-                            vDSP_ctoz(complexPtr, 2, &split, 1, vDSP_Length(halfN))
+                            vDSP_ctoz(complexPtr, 1, &split, 1, vDSP_Length(halfN))
                         }
                         vDSP_fft_zrip(fftSetup, &split, 1, log2n, FFTDirection(FFT_FORWARD))
                         vDSP_zvabs(&split, 1, magPtr.baseAddress!, 1, vDSP_Length(halfN))

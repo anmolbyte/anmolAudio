@@ -25,7 +25,11 @@ enum LoudnessMatcher {
             meanSq += pow(10.0, dB / 10.0)
         }
         meanSq /= Double(sampleCount)
-        return 10.0 * log10(meanSq) + Double(preset.preamp)
+        let safeMeanSq = max(1e-12, meanSq)
+        if safeMeanSq.isNaN || !safeMeanSq.isFinite {
+            return Double(preset.preamp)
+        }
+        return 10.0 * log10(safeMeanSq) + Double(preset.preamp)
     }
 
     /// Per-slot attenuation in dB (always ≤ 0) so both presets reach the lower
@@ -33,6 +37,9 @@ enum LoudnessMatcher {
     static func equalAttenuationsDB(presetA: EQPreset, presetB: EQPreset) -> (a: Float, b: Float) {
         let gA = broadbandGainDB(preset: presetA)
         let gB = broadbandGainDB(preset: presetB)
+        if gA.isNaN || gB.isNaN || !gA.isFinite || !gB.isFinite {
+            return (0, 0)
+        }
         let target = min(gA, gB)
         return (Float(target - gA), Float(target - gB))
     }

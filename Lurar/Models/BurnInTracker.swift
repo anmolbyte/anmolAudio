@@ -50,12 +50,11 @@ final class BurnInTracker: ObservableObject {
     func observe(engine: EQEngine) {
         cancellables.removeAll()
         Publishers.CombineLatest3(engine.$isRunning, engine.$activeOutput, engine.$isPlayingAudio)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] running, output, playing in
-                Task { @MainActor in
-                    // Only count while the engine is up *and* audio is actually
-                    // playing — a running-but-silent engine shouldn't burn in.
-                    self?.update(active: running && playing, device: output)
-                }
+                // Only count while the engine is up *and* audio is actually
+                // playing — a running-but-silent engine shouldn't burn in.
+                self?.update(active: running && playing, device: output)
             }
             .store(in: &cancellables)
     }

@@ -16,11 +16,14 @@ final class VoIPMonitor: ObservableObject {
     
     private func startPolling() {
         queue.async { [weak self] in
-            guard let self = self else { return }
-            self.checkStatus()
-            self.queue.asyncAfter(deadline: .now() + 2) {
-                self.startPolling()
-            }
+            self?.poll()
+        }
+    }
+
+    private func poll() {
+        checkStatus()
+        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.poll()
         }
     }
     
@@ -66,20 +69,25 @@ final class VoIPMonitor: ObservableObject {
             }
         }
         
+        // Single synchronous snapshot from the main actor instead of hopping per-application in a loop.
+        let voipSet: Set<String> = DispatchQueue.main.sync { VoIPAppsStore.shared.voipBundleIDs }
         let isVoIPAppRunning = NSWorkspace.shared.runningApplications.contains { app in
             guard let bundleID = app.bundleIdentifier else { return false }
-            return DispatchQueue.main.sync { VoIPAppsStore.shared.contains(bundleID) }
+            return voipSet.contains(bundleID)
         }
         
         let shouldBypass = currentlyActive && isVoIPAppRunning
         
-        // We only want to hop to the main thread and publish if the value actually changed.
-        if shouldBypass && !self.isInputActive {
-            log.info("VoIP Monitor: Input active and VoIP app running. Suspending.")
-            DispatchQueue.main.async { self.isInputActive = true }
-        } else if !shouldBypass && self.isInputActive {
-            log.info("VoIP Monitor: Input inactive or VoIP app closed. Resuming.")
-            DispatchQueue.main.async { self.isInputActive = false }
+        // Read and update the @Published property exclusively on the main queue.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if shouldBypass && !self.isInputActive {
+                log.info("VoIP Monitor: Input active and VoIP app running. Suspending.")
+                self.isInputActive = true
+            } else if !shouldBypass && self.isInputActive {
+                log.info("VoIP Monitor: Input inactive or VoIP app closed. Resuming.")
+                self.isInputActive = false
+            }
         }
     }
 }
