@@ -23,15 +23,22 @@ final class OutputVolumeMonitor: ObservableObject {
     @Published private(set) var isMuted: Bool = false
 
     private var boundDeviceID: AudioDeviceID?
+    private var boundDeviceUID: String?
     private var volumeListener: AudioDevicePropertyListener?
     private var muteListener: AudioDevicePropertyListener?
 
+    /// Point the monitor at a new output device (or `nil` to tear down).
+    func rebind(to device: AudioDevice?) {
+        rebind(to: device?.id, uid: device?.uid)
+    }
+
     /// Point the monitor at a new output device (or `nil` to tear down). Re-reads
     /// synchronously so the published values aren't stale for a notification
-    /// cycle, then installs fresh listeners. No-op if already bound to `deviceID`.
-    func rebind(to deviceID: AudioDeviceID?) {
-        guard deviceID != boundDeviceID else { return }
+    /// cycle, then installs fresh listeners. No-op if already bound to `deviceID` and `uid`.
+    func rebind(to deviceID: AudioDeviceID?, uid: String? = nil) {
+        guard deviceID != boundDeviceID || uid != boundDeviceUID else { return }
         boundDeviceID = deviceID
+        boundDeviceUID = uid
 
         guard let deviceID else {
             volumeListener = nil

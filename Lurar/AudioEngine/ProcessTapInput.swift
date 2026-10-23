@@ -87,7 +87,7 @@ final class ProcessTapInput {
             return true
         }
         guard !targets.isEmpty else {
-            throw CoreAudioError.osStatus(-1, "no audio processes available to tap")
+            throw CoreAudioError.noProcessesToTap
         }
         log.info("Tap targets: count=\(targets.count) excludedByUser=\(excludedCount)")
 

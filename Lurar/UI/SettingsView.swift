@@ -23,7 +23,7 @@ struct SettingsView: View {
             )
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .padding(20)
-                .frame(width: 460)
+                .frame(width: 520)
 
             // Flexible height, not a fixed one: a macOS `TabView` sizes itself
             // to its tallest tab and centres every shorter tab inside that
@@ -54,9 +54,9 @@ struct SettingsView: View {
             SyncSettingsTab(syncSettings: syncSettings, presetStore: presetStore)
                 .tabItem { Label("Sync", systemImage: "icloud") }
                 .padding(20)
-                .frame(width: 460)
+                .frame(width: 520)
         }
-        .frame(width: 520)
+        .frame(width: 580)
         .showsInDockWhileVisible()
     }
 }

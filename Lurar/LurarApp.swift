@@ -322,9 +322,21 @@ private struct MenuBarLabel: View {
             .task {
                 // Seed the volume monitor on the first device (onChange covers
                 // later switches). Cheap no-op once bound.
-                outputVolumeMonitor.rebind(to: deviceManager.selectedOutput?.id)
+                outputVolumeMonitor.rebind(to: deviceManager.selectedOutput)
                 guard !didRunLaunchCoordinator else { return }
                 didRunLaunchCoordinator = true
+
+                // Wire up onTopologyChange at launch so hardware changes (plug/unplug)
+                // restart or adjust the engine even before the popover has ever been opened.
+                deviceManager.onTopologyChange = { [weak e = engine, weak dm = deviceManager] in
+                    guard let engine = e, engine.isRunning else { return }
+                    guard let output = dm?.selectedOutput else {
+                        engine.stop()
+                        return
+                    }
+                    engine.start(output: output)
+                }
+
                 // Hand the app delegate a weak ref to the engine so it can
                 // fade audio out on Cmd+Q before the process exits. We wire
                 // it here rather than from `LurarApp.init()` because the
@@ -349,7 +361,7 @@ private struct MenuBarLabel: View {
             .onChange(of: deviceManager.selectedOutput) { _, newOut in
                 // Re-point the volume monitor at the new device so the menu bar
                 // glyph tracks the right output (listeners are keyed by device ID).
-                outputVolumeMonitor.rebind(to: newOut?.id)
+                outputVolumeMonitor.rebind(to: newOut)
                 // Three cases:
                 // 1. We were waiting for any device to materialize at launch
                 //    (pendingAutostart) — start the engine on the first one

@@ -11,8 +11,10 @@ final class DeviceManager: ObservableObject {
 
     @Published var selectedOutput: AudioDevice? {
         didSet {
-            guard let uid = selectedOutput?.uid, uid != oldValue?.uid else { return }
-            preferences.lastOutputUID = uid
+            guard let newOutput = selectedOutput else { return }
+            guard newOutput.uid != oldValue?.uid else { return }
+            preferences.lastOutputUID = newOutput.uid
+            syncSystemDefaultIfNeeded(to: newOutput)
         }
     }
 
@@ -22,6 +24,7 @@ final class DeviceManager: ObservableObject {
     private let preferences: OutputSelectionPreferences
     private var topologyListener: DeviceChangeListener?
     private var defaultOutputListener: DefaultOutputDeviceListener?
+    private var isSyncingSystemDefault = false
     /// UID snapshot of the last visible device list — used to decide
     /// whether a topology notification actually changed anything the user
     /// cares about, or whether it was just our private tap aggregate
@@ -100,7 +103,20 @@ final class DeviceManager: ObservableObject {
         if !initial && materialChange { onTopologyChange?() }
     }
 
+    private func syncSystemDefaultIfNeeded(to output: AudioDevice) {
+        guard let currentDefault = CoreAudioDevices.defaultOutput(), currentDefault.id != output.id else { return }
+        isSyncingSystemDefault = true
+        defer { isSyncingSystemDefault = false }
+        do {
+            try CoreAudioDevices.setDefaultOutput(id: output.id)
+            log.info("Synced macOS default output to \(output.name, privacy: .public)")
+        } catch {
+            log.error("Failed to sync macOS default output to \(output.name, privacy: .public): \(String(describing: error))")
+        }
+    }
+
     private func handleSystemDefaultChanged() {
+        guard !isSyncingSystemDefault else { return }
         guard let newDefault = CoreAudioDevices.defaultOutput() else {
             log.info("System default changed — no default device available")
             return
@@ -112,8 +128,8 @@ final class DeviceManager: ObservableObject {
         if !outputDevices.contains(where: { $0.id == newDefault.id || $0.uid == newDefault.uid }) {
             refresh(initial: false)
         }
-        guard let resolved = outputDevices.first(where: { $0.id == newDefault.id })
-            ?? outputDevices.first(where: { $0.uid == newDefault.uid }) else {
+        guard let resolved = outputDevices.first(where: { $0.uid == newDefault.uid })
+            ?? outputDevices.first(where: { $0.id == newDefault.id }) else {
             log.info("System default changed to \(newDefault.name, privacy: .public) but it isn't in the visible output list")
             return
         }

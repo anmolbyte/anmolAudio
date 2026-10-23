@@ -12,6 +12,7 @@ enum CoreAudioError: Error, CustomStringConvertible {
     case noDefaultDevice
     case deviceNotFound(String)
     case sampleRateUnsupported(Double)
+    case noProcessesToTap
 
     var description: String {
         switch self {
@@ -20,6 +21,7 @@ enum CoreAudioError: Error, CustomStringConvertible {
         case .noDefaultDevice: return "No default audio device"
         case .deviceNotFound(let id): return "Device not found: \(id)"
         case .sampleRateUnsupported(let sr): return "Sample rate \(sr) Hz not supported on device"
+        case .noProcessesToTap: return "No audio apps available to tap (all excluded or none running)"
         }
     }
 }
@@ -70,6 +72,19 @@ enum CoreAudioDevices {
     static func defaultOutput() -> AudioDevice? {
         guard let id = try? defaultDeviceID(scope: kAudioHardwarePropertyDefaultOutputDevice) else { return nil }
         return try? device(for: id)
+    }
+
+    static func setDefaultOutput(id: AudioDeviceID) throws {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = id
+        try check(
+            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, UInt32(MemoryLayout<AudioDeviceID>.size), &deviceID),
+            "set default output device"
+        )
     }
 
     private static func systemDeviceIDs() throws -> [AudioDeviceID] {
@@ -141,7 +156,7 @@ enum CoreAudioDevices {
         return cf as String
     }
 
-    private static func streamChannelCount(id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
+    static func streamChannelCount(id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: scope,
@@ -236,9 +251,11 @@ enum CoreAudioVolume {
         if let main = channelScalar(for: id, element: kAudioObjectPropertyElementMain) {
             return main
         }
-        // Fall back to per-channel (typically elements 1 and 2 for stereo).
+        // Fall back to per-channel, dynamically querying channel count.
+        let channelCount = CoreAudioDevices.streamChannelCount(id: id, scope: kAudioObjectPropertyScopeOutput)
+        let maxChannels = channelCount > 0 ? UInt32(channelCount) : 2
         var values: [Float] = []
-        for element in UInt32(1)...UInt32(2) {
+        for element in 1...maxChannels {
             if let v = channelScalar(for: id, element: element) { values.append(v) }
         }
         guard !values.isEmpty else { return nil }

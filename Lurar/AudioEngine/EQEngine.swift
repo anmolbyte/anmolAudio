@@ -348,6 +348,14 @@ final class EQEngine: ObservableObject {
             inputDeviceID = prepared.deviceID
             tapSampleRate = prepared.sampleRate
             activeSampleRate = tapSampleRate
+        } catch CoreAudioError.noProcessesToTap {
+            try? tapInput.stop()
+            try? halOutput.stop()
+            ringBuffer.reset()
+            isRunning = false
+            statusMessage = "No apps to tap (all excluded or none running)"
+            log.info("Tap setup skipped: no processes to tap")
+            return
         } catch {
             try? tapInput.stop()
             try? halOutput.stop()
