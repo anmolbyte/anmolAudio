@@ -2,12 +2,12 @@ import AppKit
 import SwiftUI
 import OSLog
 
-private let bootLog = Logger(subsystem: "app.lurar.Lurar", category: "Boot")
-private let launchLog = Logger(subsystem: "app.lurar.Lurar", category: "Launch")
+private let bootLog = Logger(subsystem: "app.anmol.anmolAudio", category: "Boot")
+private let launchLog = Logger(subsystem: "app.anmol.anmolAudio", category: "Launch")
 
 @main
-struct LurarApp: App {
-    @NSApplicationDelegateAdaptor(LurarAppDelegate.self) private var appDelegate
+struct anmolAudioApp: App {
+    @NSApplicationDelegateAdaptor(anmolAudioAppDelegate.self) private var appDelegate
     @StateObject private var outputPreferences: OutputSelectionPreferences
     @StateObject private var deviceManager: DeviceManager
     @StateObject private var syncSettings: PresetSyncSettings
@@ -41,6 +41,7 @@ struct LurarApp: App {
             MenuBarLabel(
                 engine: engine,
                 deviceManager: deviceManager,
+                outputPreferences: outputPreferences,
                 presetStore: presetStore,
                 presetCatalog: presetCatalog,
                 devicePresetMemory: devicePresetMemory,
@@ -53,16 +54,26 @@ struct LurarApp: App {
         .menuBarExtraStyle(.window)
         .onChange(of: voipMonitor.isInputActive, initial: false) { _, active in
             guard suspendDuringVoIP else { return }
-            if active {
-                if engine.isRunning {
-                    wasSuspendedForVoIP = true
-                    engine.stop()
-                }
-            } else {
-                if wasSuspendedForVoIP {
-                    wasSuspendedForVoIP = false
-                    if let output = deviceManager.selectedOutput {
-                        engine.start(output: output)
+            switch outputPreferences.callHandlingMode {
+            case .bypassCallAudio:
+                // Call audio (avconferenced, FaceTime, Zoom) is bypassed
+                // directly to hardware in ProcessTapInput, so background music keeps full EQ
+                // and call audio has native echo cancellation.
+                break
+            case .flattenEQKeepPreamp:
+                engine.setCallMode(active: active)
+            case .pauseDuringCalls:
+                if active {
+                    if engine.isRunning {
+                        wasSuspendedForVoIP = true
+                        engine.stop()
+                    }
+                } else {
+                    if wasSuspendedForVoIP {
+                        wasSuspendedForVoIP = false
+                        if let output = deviceManager.selectedOutput {
+                            engine.start(output: output)
+                        }
                     }
                 }
             }
@@ -151,6 +162,8 @@ struct LurarApp: App {
             SettingsView(
                 syncSettings: syncSettings,
                 presetStore: presetStore,
+                presetCatalog: presetCatalog,
+                devicePresetMemory: devicePresetMemory,
                 excludedAppsStore: excludedAppsStore,
                 outputPreferences: outputPreferences,
                 updater: updater,
@@ -216,7 +229,7 @@ struct LurarApp: App {
 /// DAC emits a click as macOS reroutes audio back to its default
 /// destination.
 @MainActor
-final class LurarAppDelegate: NSObject, NSApplicationDelegate {
+final class anmolAudioAppDelegate: NSObject, NSApplicationDelegate {
     /// Set by `MenuBarLabel.task` once the persistent engine `@StateObject`
     /// is bound. Weak because the engine is owned by the SwiftUI app, not us.
     weak var engine: EQEngine?
@@ -224,7 +237,7 @@ final class LurarAppDelegate: NSObject, NSApplicationDelegate {
     nonisolated override init() {
         super.init()
         MainActor.assumeIsolated {
-            launchLog.info("LurarAppDelegate: created (NSApp.delegate adaptor instantiated)")
+            launchLog.info("anmolAudioAppDelegate: created (NSApp.delegate adaptor instantiated)")
         }
     }
 
@@ -251,6 +264,7 @@ final class LurarAppDelegate: NSObject, NSApplicationDelegate {
 private struct MenuBarLabel: View {
     @ObservedObject var engine: EQEngine
     @ObservedObject var deviceManager: DeviceManager
+    @ObservedObject var outputPreferences: OutputSelectionPreferences
     // Preset stores are needed to resolve the right preset at autostart —
     // without this, `MenuBarView.task` (which mounts lazily when the
     // popover first opens) was the only thing applying a preset, so
@@ -318,6 +332,7 @@ private struct MenuBarLabel: View {
                 didRunLaunchCoordinator = true
 
                 // Seed the persistent engine with initial crossfeed settings and excluded apps
+                engine.outputPreferences = outputPreferences
                 engine.setCrossfeedIntensity(crossfeedSettings.isOn ? crossfeedSettings.intensity : 0)
                 engine.setCrossfeedCutoff(crossfeedSettings.cutoff)
                 engine.excludedAppsStore = excludedAppsStore
@@ -342,7 +357,7 @@ private struct MenuBarLabel: View {
                 // engine `@StateObject`'s wrappedValue isn't guaranteed to
                 // be the persistent instance during App init — see the note
                 // in `LurarApp.init()`.
-                if let delegate = NSApp.delegate as? LurarAppDelegate {
+                if let delegate = NSApp.delegate as? anmolAudioAppDelegate {
                     delegate.engine = engine
                     launchLog.info("App delegate engine reference wired")
                 } else {

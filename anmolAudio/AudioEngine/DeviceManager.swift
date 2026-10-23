@@ -44,13 +44,20 @@ final class DeviceManager: ObservableObject {
 
     func refresh(initial: Bool) {
         let all = CoreAudioDevices.all()
-        // Lurar's own private aggregate (created in ProcessTapInput) is
+        for device in all where device.hasOutput {
+            preferences.recordSeen(device: device)
+        }
+        // anmolAudio's own private aggregate (created in ProcessTapInput) is
         // visible to its creating process even with isPrivate=true. Hide it
         // from the picker — selecting it as the output would loop the tap
-        // back through itself.
+        // back through itself. Also filter out ignored devices (like displays).
         let outs = all
             .filter(\.hasOutput)
-            .filter { !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") }
+            .filter { !$0.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") && !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") }
+            .filter { device in
+                let policy = preferences.effectivePolicy(for: device)
+                return policy != .ignored || device.uid == selectedOutput?.uid
+            }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
 
         // Snapshot the previous visible set before overwriting it — used both
@@ -63,29 +70,26 @@ final class DeviceManager: ObservableObject {
 
         // Opt-in auto-switch: when a brand-new output device connects — e.g. a
         // USB DAC that macOS detects but doesn't promote to system default —
-        // move Lurar's output to it. Only on real topology changes (never the
-        // initial population) and only when the user enabled the toggle. The
-        // aggregate filter above keeps our own tap churn out of `addedUIDs`, so
-        // this fires on genuine, user-visible plug-ins. When it doesn't apply
-        // we fall through to the normal keep/restore policy below.
+        // move anmolAudio's output to it if the device policy allows auto-switching.
         let newlyConnected = (!initial && preferences.switchesToNewDevices)
-            ? outs.first(where: { addedUIDs.contains($0.uid) })
+            ? outs.first(where: { addedUIDs.contains($0.uid) && preferences.effectivePolicy(for: $0) == .auto })
             : nil
 
         // Output policy: jump to a just-connected device if auto-switch claimed
         // one; otherwise keep the current selection if it's still around;
         // otherwise restore the last-used UID; otherwise fall back to the
-        // current system default; otherwise the first device.
+        // current system default (if allowed); otherwise the first valid device.
         if let newlyConnected {
             selectedOutput = newlyConnected
         } else if let sel = selectedOutput, let still = outs.first(where: { $0.uid == sel.uid }) {
             selectedOutput = still
         } else {
             let remembered = preferences.lastOutputUID
-                .flatMap { uid in outs.first { $0.uid == uid } }
+                .flatMap { uid in outs.first { $0.uid == uid && preferences.effectivePolicy(for: $0) != .ignored } }
             let systemDefault = CoreAudioDevices.defaultOutput()
-                .flatMap { def in outs.first { $0.id == def.id } }
-            selectedOutput = remembered ?? systemDefault ?? outs.first
+                .flatMap { def in outs.first { $0.id == def.id && preferences.effectivePolicy(for: $0) == .auto } }
+            let firstValid = outs.first(where: { preferences.effectivePolicy(for: $0) != .ignored })
+            selectedOutput = remembered ?? systemDefault ?? firstValid ?? outs.first
         }
 
         // Only nudge the engine if the visible device list materially
@@ -141,6 +145,14 @@ final class DeviceManager: ObservableObject {
             return
         }
         if resolved.uid == selectedOutput?.uid { return }
+
+        // Guard against auto-switching to blocked or manual-only devices (such as docks or monitors)
+        let effectivePolicy = preferences.effectivePolicy(for: resolved)
+        guard effectivePolicy == .auto else {
+            log.info("System default changed to \(resolved.name, privacy: .public), but device policy is \(effectivePolicy.rawValue) — staying on current output")
+            return
+        }
+
         if preferences.followsSystemDefault {
             log.info("System default changed → \(resolved.name, privacy: .public); following")
             selectedOutput = resolved

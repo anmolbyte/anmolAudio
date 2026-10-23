@@ -47,6 +47,49 @@ private func check(_ status: OSStatus, _ context: @autoclosure () -> String) thr
 
 // MARK: - Device representation
 
+enum AudioDeviceTransportType: String, Codable, CaseIterable {
+    case builtIn
+    case bluetooth
+    case usb
+    case displayPort
+    case hdmi
+    case thunderbolt
+    case virtual
+    case airplay
+    case unknown
+
+    var displayName: String {
+        switch self {
+        case .builtIn: return "Built-in"
+        case .bluetooth: return "Bluetooth"
+        case .usb: return "USB"
+        case .displayPort: return "DisplayPort"
+        case .hdmi: return "HDMI"
+        case .thunderbolt: return "Thunderbolt"
+        case .virtual: return "Virtual"
+        case .airplay: return "AirPlay"
+        case .unknown: return "Audio Device"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .builtIn: return "laptopcomputer"
+        case .bluetooth: return "headphones"
+        case .usb: return "cable.connector"
+        case .displayPort, .hdmi: return "display"
+        case .thunderbolt: return "bolt"
+        case .virtual: return "waveform"
+        case .airplay: return "airplayaudio"
+        case .unknown: return "speaker.wave.2"
+        }
+    }
+
+    var isDisplay: Bool {
+        self == .displayPort || self == .hdmi
+    }
+}
+
 struct AudioDevice: Identifiable, Hashable {
     let id: AudioDeviceID
     let uid: String
@@ -54,6 +97,21 @@ struct AudioDevice: Identifiable, Hashable {
     let manufacturer: String
     let hasInput: Bool
     let hasOutput: Bool
+    let transportType: AudioDeviceTransportType
+
+    var isDock: Bool {
+        transportType == .usb && (
+            name.localizedCaseInsensitiveContains("dock")
+            || name.localizedCaseInsensitiveContains("hub")
+            || manufacturer.localizedCaseInsensitiveContains("HP")
+            || manufacturer.localizedCaseInsensitiveContains("CalDigit")
+            || manufacturer.localizedCaseInsensitiveContains("Dell")
+        )
+    }
+
+    var isDisplay: Bool {
+        transportType.isDisplay
+    }
 }
 
 // MARK: - Device enumeration
@@ -129,14 +187,40 @@ enum CoreAudioDevices {
         let manufacturer = (try? stringProperty(id: id, selector: kAudioObjectPropertyManufacturer)) ?? ""
         let inputChans = streamChannelCount(id: id, scope: kAudioObjectPropertyScopeInput)
         let outputChans = streamChannelCount(id: id, scope: kAudioObjectPropertyScopeOutput)
+        let transport = transportType(for: id)
         return AudioDevice(
             id: id,
             uid: uid,
             name: name,
             manufacturer: manufacturer,
             hasInput: inputChans > 0,
-            hasOutput: outputChans > 0
+            hasOutput: outputChans > 0,
+            transportType: transport
         )
+    }
+
+    private static func transportType(for id: AudioDeviceID) -> AudioDeviceTransportType {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var tran: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &tran) == noErr else {
+            return .unknown
+        }
+        switch tran {
+        case kAudioDeviceTransportTypeBuiltIn: return .builtIn
+        case kAudioDeviceTransportTypeBluetooth, kAudioDeviceTransportTypeBluetoothLE: return .bluetooth
+        case kAudioDeviceTransportTypeUSB: return .usb
+        case kAudioDeviceTransportTypeDisplayPort: return .displayPort
+        case kAudioDeviceTransportTypeHDMI: return .hdmi
+        case kAudioDeviceTransportTypeThunderbolt: return .thunderbolt
+        case kAudioDeviceTransportTypeAirPlay: return .airplay
+        case kAudioDeviceTransportTypeVirtual: return .virtual
+        default: return .unknown
+        }
     }
 
     private static func stringProperty(id: AudioObjectID, selector: AudioObjectPropertySelector) throws -> String {

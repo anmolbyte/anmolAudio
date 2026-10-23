@@ -5,7 +5,9 @@ import AppKit
 /// scales without bundled assets. `face: false` drops eyes/mouth for
 /// sub-pixel sizes (menu bar). `filled: false` hollows the earcups —
 /// used to indicate engine-off state.
-struct LurarMark: View {
+typealias LurarMark = anmolAudioMark
+
+struct anmolAudioMark: View {
     var face: Bool = true
     var filled: Bool = true
     var primary: Color = .accentColor
@@ -111,7 +113,7 @@ private struct LurarMouth: Shape {
     }
 }
 
-extension LurarMark {
+extension anmolAudioMark {
     /// Rasterized template NSImage of the silhouette. Use for
     /// MenuBarExtra labels — SwiftUI doesn't reliably render custom
     /// Shape views as menu bar items; baked NSImages with isTemplate

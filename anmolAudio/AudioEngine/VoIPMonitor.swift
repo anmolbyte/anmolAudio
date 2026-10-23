@@ -69,14 +69,35 @@ final class VoIPMonitor: ObservableObject {
             }
         }
         
-        // Single synchronous snapshot from the main actor instead of hopping per-application in a loop.
+        // Single synchronous snapshot from the main actor.
         let voipSet: Set<String> = DispatchQueue.main.sync { VoIPAppsStore.shared.voipBundleIDs }
-        let isVoIPAppRunning = NSWorkspace.shared.runningApplications.contains { app in
+        
+        // Check both Core Audio process objects (captures daemons like avconferenced) and GUI apps
+        var isVoIPActiveInAudio = false
+        if let procs = try? AudioProcessInfo.allProcessObjects() {
+            for proc in procs {
+                if let bid = AudioProcessInfo.bundleID(for: proc), voipSet.contains(bid) {
+                    var isInputAddr = AudioObjectPropertyAddress(
+                        mSelector: kAudioProcessPropertyIsRunningInput,
+                        mScope: kAudioObjectPropertyScopeGlobal,
+                        mElement: kAudioObjectPropertyElementMain
+                    )
+                    var isRunningInput: UInt32 = 0
+                    var s = UInt32(MemoryLayout<UInt32>.size)
+                    if AudioObjectGetPropertyData(proc, &isInputAddr, 0, nil, &s, &isRunningInput) == noErr, isRunningInput != 0 {
+                        isVoIPActiveInAudio = true
+                        break
+                    }
+                }
+            }
+        }
+
+        let isVoIPAppRunning = isVoIPActiveInAudio || NSWorkspace.shared.runningApplications.contains { app in
             guard let bundleID = app.bundleIdentifier else { return false }
             return voipSet.contains(bundleID)
         }
         
-        let shouldBypass = currentlyActive && isVoIPAppRunning
+        let shouldBypass = (currentlyActive && isVoIPAppRunning) || isVoIPActiveInAudio
         
         // Read and update the @Published property exclusively on the main queue.
         DispatchQueue.main.async { [weak self] in

@@ -94,6 +94,15 @@ final class EQEngine: ObservableObject {
     /// store is owned by the App (same lifetime as the engine, so this is just
     /// to avoid a retain cycle, not to handle real teardown).
     weak var excludedAppsStore: ExcludedAppsStore?
+    weak var outputPreferences: OutputSelectionPreferences?
+
+    var effectiveExcludedBundleIDs: Set<String> {
+        var set = excludedAppsStore?.excludedBundleIDs ?? []
+        if outputPreferences?.callHandlingMode == .bypassCallAudio {
+            set.formUnion(VoIPAppsStore.shared.voipBundleIDs)
+        }
+        return set
+    }
 
     // Tap-side sample-rate listener. Fires on every tap-rate change (hi-res
     // track switches when the listening DAC tracks the system default) and
@@ -343,7 +352,7 @@ final class EQEngine: ObservableObject {
         let inputDeviceID: AudioDeviceID
         let tapSampleRate: Double
         do {
-            let excludedBundleIDs = excludedAppsStore?.excludedBundleIDs ?? []
+            let excludedBundleIDs = effectiveExcludedBundleIDs
             let prepared = try tapInput.prepare(excludedBundleIDs: excludedBundleIDs)
             inputDeviceID = prepared.deviceID
             tapSampleRate = prepared.sampleRate
@@ -699,7 +708,7 @@ final class EQEngine: ObservableObject {
         let tapped = tapInput.tappedProcessObjects
         guard !tapped.isEmpty,
               let all = try? AudioProcessInfo.allProcessObjects() else { return [] }
-        let excluded = excludedAppsStore?.excludedBundleIDs ?? []
+        let excluded = effectiveExcludedBundleIDs
         let ownObject = try? AudioProcessInfo.processObject(for: getpid())
         return all.filter { obj in
             if let ownObject, obj == ownObject { return false }
@@ -1184,6 +1193,29 @@ final class EQEngine: ObservableObject {
         } else {
             eqProcessor.exitSlotMode()
             isBypassed = false
+        }
+    }
+
+    /// Sets Call Mode during active VoIP calls when using `flattenEQKeepPreamp`.
+    /// Flattens all biquad bands to prevent echo cancellation ducking, but retains
+    /// the active preset's preamp scalar.
+    func setCallMode(active: Bool) {
+        guard isRunning, let preset = effectivePreset else { return }
+        if active {
+            let flat = EQPreset.flat
+            eqProcessor.loadSlots(
+                presetA: preset,
+                presetB: flat,
+                sampleRate: activeSampleRate ?? 48_000,
+                extraGainDBA: 0,
+                extraGainDBB: preset.preamp
+            )
+            eqProcessor.setActiveSlot(.b)
+            log.info("Call mode activated: flat EQ with preserved preamp (\(preset.preamp) dB)")
+        } else {
+            eqProcessor.exitSlotMode()
+            apply(preset: preset)
+            log.info("Call mode deactivated: restored preset \(preset.name, privacy: .public)")
         }
     }
 }

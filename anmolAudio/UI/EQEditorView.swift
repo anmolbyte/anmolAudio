@@ -75,7 +75,7 @@ struct EQEditorView: View {
     static let preampRange: ClosedRange<Float> = -24...0
 
     private var visiblePresets: [EQPreset] {
-        Lurar.visiblePresets(catalog: presetCatalog, store: presetStore)
+        anmolAudio.visiblePresets(catalog: presetCatalog, store: presetStore)
     }
 
     /// Dropdown source. Always includes the current draft, even if the store's
@@ -478,7 +478,7 @@ struct EQEditorView: View {
                     get: { draft.id.uuidString },
                     set: { newID in attemptSwitch(to: UUID(uuidString: newID)) }
                 ),
-                items: Lurar.sortedPresetItems(
+                items: anmolAudio.sortedPresetItems(
                     presets: dropdownPresets,
                     catalog: presetCatalog,
                     store: presetStore

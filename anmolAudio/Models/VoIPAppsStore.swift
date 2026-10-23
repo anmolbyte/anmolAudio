@@ -4,20 +4,29 @@ import AppKit
 
 @MainActor
 final class VoIPAppsStore: ObservableObject {
-    private static let defaultsKey = "lurar.voipBundleIDs"
+    private static let defaultsKey = "anmolAudio.voipBundleIDs"
+    private static let legacyDefaultsKey = "lurar.voipBundleIDs"
 
     @Published private(set) var voipBundleIDs: Set<String>
 
     static let shared = VoIPAppsStore() // singleton for VoIPMonitor
 
     private init() {
-        let raw = UserDefaults.standard.stringArray(forKey: Self.defaultsKey) ?? [
-            "com.apple.FaceTime",
-            "us.zoom.xos",
-            "com.microsoft.teams",
-            "com.microsoft.teams2"
-        ]
-        self.voipBundleIDs = Set(raw)
+        let raw = UserDefaults.standard.stringArray(forKey: Self.defaultsKey)
+            ?? UserDefaults.standard.stringArray(forKey: Self.legacyDefaultsKey)
+            ?? [
+                "com.apple.FaceTime",
+                "com.apple.avconferenced",
+                "com.apple.TelephonyUtilities",
+                "us.zoom.xos",
+                "com.microsoft.teams",
+                "com.microsoft.teams2"
+            ]
+        var set = Set(raw)
+        // Always ensure system call daemons are recognized
+        set.insert("com.apple.avconferenced")
+        set.insert("com.apple.TelephonyUtilities")
+        self.voipBundleIDs = set
     }
 
     func contains(_ bundleID: String) -> Bool {

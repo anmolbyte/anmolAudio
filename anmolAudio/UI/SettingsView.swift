@@ -2,11 +2,13 @@ import SwiftUI
 import ServiceManagement
 import OSLog
 
-private let settingsLog = Logger(subsystem: "app.lurar.Lurar", category: "Settings")
+private let settingsLog = Logger(subsystem: "app.anmol.anmolAudio", category: "Settings")
 
 struct SettingsView: View {
     @ObservedObject var syncSettings: PresetSyncSettings
     @ObservedObject var presetStore: PresetStore
+    @ObservedObject var presetCatalog: PresetCatalog
+    @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
     @ObservedObject var outputPreferences: OutputSelectionPreferences
     @ObservedObject var updater: UpdaterController
@@ -23,18 +25,16 @@ struct SettingsView: View {
             )
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .padding(20)
-                .frame(width: 520)
+                .frame(width: 540)
 
-            // Flexible height, not a fixed one: a macOS `TabView` sizes itself
-            // to its tallest tab and centres every shorter tab inside that
-            // area. General is by far the tallest, so pinning this tab to 460
-            // pt left the app list floating with dead space above and below
-            // it (#144). `idealHeight` keeps 460 as the sizing hint the window
-            // adopts when General ever gets shorter; `maxHeight: .infinity`
-            // lets the list stretch to fill whatever height it's actually
-            // given.
-            ExcludedAppsView(store: excludedAppsStore, embedded: true)
-                .tabItem { Label("Excluded Apps", systemImage: "square.slash") }
+            DevicesSettingsView(
+                outputPreferences: outputPreferences,
+                deviceManager: deviceManager,
+                devicePresetMemory: devicePresetMemory,
+                presetStore: presetStore,
+                presetCatalog: presetCatalog
+            )
+                .tabItem { Label("Devices", systemImage: "headphones") }
                 .frame(
                     maxWidth: .infinity,
                     minHeight: 460,
@@ -42,8 +42,12 @@ struct SettingsView: View {
                     maxHeight: .infinity
                 )
 
-            VoIPAppsView(store: VoIPAppsStore.shared, embedded: true)
-                .tabItem { Label("VoIP Apps", systemImage: "phone.bubble") }
+            UnifiedAppsView(
+                outputPreferences: outputPreferences,
+                excludedAppsStore: excludedAppsStore,
+                voipAppsStore: VoIPAppsStore.shared
+            )
+                .tabItem { Label("Apps", systemImage: "square.stack.3d.up") }
                 .frame(
                     maxWidth: .infinity,
                     minHeight: 460,
@@ -54,9 +58,9 @@ struct SettingsView: View {
             SyncSettingsTab(syncSettings: syncSettings, presetStore: presetStore)
                 .tabItem { Label("Sync", systemImage: "icloud") }
                 .padding(20)
-                .frame(width: 520)
+                .frame(width: 540)
         }
-        .frame(width: 580)
+        .frame(width: 600)
         .showsInDockWhileVisible()
     }
 }

@@ -22,7 +22,7 @@ struct ABComparisonView: View {
     }
 
     private var visiblePresets: [EQPreset] {
-        Lurar.visiblePresets(catalog: presetCatalog, store: presetStore)
+        anmolAudio.visiblePresets(catalog: presetCatalog, store: presetStore)
     }
 
     var body: some View {

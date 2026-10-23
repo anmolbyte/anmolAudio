@@ -54,7 +54,7 @@ struct MenuBarView: View {
     @State private var noMatchesNotice: String?
 
     private var visiblePresets: [EQPreset] {
-        Lurar.visiblePresets(catalog: presetCatalog, store: presetStore)
+        anmolAudio.visiblePresets(catalog: presetCatalog, store: presetStore)
     }
 
     /// Quit handler that fades audio to silence before terminating. We
@@ -511,7 +511,7 @@ struct MenuBarView: View {
                         }
                     }
                 ),
-                items: Lurar.sortedPresetItems(
+                items: anmolAudio.sortedPresetItems(
                     presets: visiblePresets,
                     catalog: presetCatalog,
                     store: presetStore

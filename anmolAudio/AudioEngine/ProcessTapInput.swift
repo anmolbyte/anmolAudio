@@ -130,7 +130,7 @@ final class ProcessTapInput {
         //      aggregate accept the tap but deliver only zeros.
         let mainSubDevice = try Self.systemDefaultOutput()
         let mainSubDeviceUID = mainSubDevice.uid
-        let aggregateUID = "app.lurar.Lurar.aggregate.\(UUID().uuidString)"
+        let aggregateUID = "app.anmol.anmolAudio.aggregate.\(UUID().uuidString)"
         let aggregateDescription: [String: Any] = [
             kAudioAggregateDeviceNameKey as String: "Lurar System Tap (private)",
             kAudioAggregateDeviceUIDKey as String: aggregateUID,
