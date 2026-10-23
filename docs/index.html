@@ -46,9 +46,7 @@
     "featureList": [
       "10-band parametric EQ (low shelf, 8 peaks, high shelf)",
       "AutoEq catalog built in (Oratory1990, Crinacle, etc.)",
-      "Bauer-style crossfeed",
-      "ISO 226:2003 equal-loudness compensation",
-      "A/B compare (sighted and blind, loudness-matched)",
+      "A/B compare (sighted and blind)",
       "Per-device preset memory and auto-suggest",
       "Per-app exclusion by bundle ID",
       "Hold-to-bypass hotkey",
@@ -144,7 +142,7 @@
         </li>
         <li>
           <div class="pipeline-step">10-band EQ</div>
-          <p>Float32 vDSP biquad cascade, plus crossfeed and loudness compensation.</p>
+          <p>Float32 vDSP biquad cascade with lossless audio processing.</p>
         </li>
         <li>
           <div class="pipeline-step">Your DAC</div>
@@ -220,17 +218,12 @@
       </div>
 
       <div class="feature">
-        <h3>Crossfeed &amp; loudness</h3>
+        <h3>Smart Device Policies</h3>
         <p>
-          Bauer-style crossfeed with adjustable intensity and head-shadow
-          cutoff for binaural-friendly imaging. An ISO 226:2003 equal-loudness
-          curve compensates for low-volume listening — the Fletcher-Munson
-          smile, dialed in to a phon offset, not guessed at.
+          Automatically filter out display audio (HDMI / DisplayPort) so monitors
+          never steal your sound. Set office USB docks to manual-only and pair
+          preferred EQ profiles per output device.
         </p>
-        <picture>
-          <source srcset="screenshots/crossfeed-loudness-dark.png" media="(prefers-color-scheme: dark)">
-          <img src="screenshots/crossfeed-loudness.png" alt="Crossfeed and loudness sliders" loading="lazy">
-        </picture>
       </div>
 
       <div class="feature">
@@ -402,9 +395,7 @@
         <summary>Is the audio path lossless?</summary>
         <p>
           Yes. Float32 internally, no sample-rate conversion unless your
-          output device requires it (most don't). Crossfeed and loudness are
-          structurally bypassed at zero settings — not just numerically
-          flat, but skipped entirely.
+          output device requires it (most don't). Clean, lossless biquad EQ.
         </p>
       </details>
 

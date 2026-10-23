@@ -32,18 +32,10 @@ final class EQEngine: ObservableObject {
     /// Exits by routing through `apply(preset:)` so the cascades return to a
     /// coherent single-preset state.
     @Published private(set) var isBypassed: Bool = false
-    /// Loudness-compensation slider value in dB phon offset below the 83-phon
-    /// mastering reference. 0 = off, more negative = quieter listening,
-    /// more lift. Clamped to `loudnessOffsetRange`. Global setting persisted
-    /// in UserDefaults — independent of the active preset.
-    @Published private(set) var loudnessOffsetDB: Float = 0
-
-    static let loudnessOffsetRange: ClosedRange<Float> = -40...0
-    private static let loudnessOffsetDefaultsKey = "anmolAudio.loudnessOffsetDB"
 
     // Signal flow:
     //   ProcessTap (system audio, excl. own process, at tapSR)
-    //     → crossfeed + EQProcessor (DSP at tapSR)
+    //     → EQProcessor (DSP at tapSR)
     //     → analyzer + clip meter
     //     → StereoResampler (tapSR → halSR)
     //     → ring buffer (halSR)
@@ -59,7 +51,6 @@ final class EQEngine: ObservableObject {
     // through an input device, so the orange microphone privacy indicator stays off.
     private let tapInput = ProcessTapInput()
     private let eqProcessor = EQProcessor()
-    private let crossfeed = Crossfeed()
     let spectrumAnalyzer = SpectrumAnalyzer()
     let clipMeter = ClipMeter()
     private let ringBuffer = StereoFloatRingBuffer(capacityFrames: 96_000) // ~2 s @ 48k stereo
@@ -176,12 +167,6 @@ final class EQEngine: ObservableObject {
     }
 
     init() {
-        let stored = UserDefaults.standard.object(forKey: Self.loudnessOffsetDefaultsKey) as? Double
-        self.loudnessOffsetDB = Self.clampLoudness(Float(stored ?? 0))
-        // Prime the processor so its `loudnessActive` snapshot matches the
-        // persisted value before the first audio callback. Idempotent at
-        // offset 0 (publishes an inactive identity).
-        eqProcessor.publishLoudness(offsetDB: loudnessOffsetDB)
         // Wire up the global ⌥B hotkey here, NOT from `anmolAudioApp.init`. Calling
         // methods on a `@StateObject`'s wrappedValue from an App's init operates
         // on a transient instance that SwiftUI later discards before binding the
@@ -440,23 +425,19 @@ final class EQEngine: ObservableObject {
         if let preset = effectivePreset {
             eqProcessor.configure(preset: preset, sampleRate: tapSampleRate)
         }
-        crossfeed.reset()
-        crossfeed.configure(sampleRate: tapSampleRate)
         spectrumAnalyzer.reset()
         spectrumAnalyzer.configure(sampleRate: tapSampleRate)
         clipMeter.reset()
         clipMeter.configure(sampleRate: tapSampleRate)
 
         // 4. Start the tap IOProc. Its callback runs on the audio thread:
-        //    crossfeed → EQ → analyzer/clip-meter → SRC → ring buffer write.
+        //    EQ → analyzer/clip-meter → SRC → ring buffer write.
         do {
-            try tapInput.start { [eqProcessor, crossfeed, spectrumAnalyzer, clipMeter, ringBuffer, resampler] left, right, frames in
-                crossfeed.process(left: left, right: right, frames: frames)
+            try tapInput.start { [eqProcessor, spectrumAnalyzer, clipMeter, ringBuffer, resampler] left, right, frames in
                 eqProcessor.process(left: left, right: right, frames: frames)
                 spectrumAnalyzer.submit(left: left, right: right, frames: frames)
-                // Post-loudness, pre-output: this is the last point at which we
-                // can measure what the user actually hears before the ring
-                // buffer hands it to the output device.
+                // Pre-output: this is the point at which we measure what the user
+                // actually hears before the ring buffer hands it to the output device.
                 clipMeter.submit(left: left, right: right, frames: frames)
                 resampler.processIntoRingBuffer(left: left, right: right, frames: frames, ringBuffer: ringBuffer)
             }
@@ -858,8 +839,8 @@ final class EQEngine: ObservableObject {
 
     /// Output peak below which we treat the signal as silence. Paused apps
     /// deliver digital zeros, which read at the meter's ~−120 dBFS floor, so
-    /// the bar sits well below any real playback. We measure post-loudness /
-    /// post-preamp (what the user actually hears), so heavy loudness
+    /// the bar sits well below any real playback. We measure post-preamp
+    /// (what the user actually hears).
     /// compensation can attenuate quiet music by tens of dB — −70 keeps that
     /// margin and still never mistakes true silence for playback.
     private static let silenceFloorDB: Float = -70
@@ -920,7 +901,6 @@ final class EQEngine: ObservableObject {
         if let preset = effectivePreset {
             eqProcessor.configure(preset: preset, sampleRate: newSR)
         }
-        crossfeed.configure(sampleRate: newSR)
         spectrumAnalyzer.configure(sampleRate: newSR)
         clipMeter.configure(sampleRate: newSR)
         resampler?.configure(inputSampleRate: newSR)
@@ -1070,34 +1050,6 @@ final class EQEngine: ObservableObject {
             p.preamp = dB
             currentPreset = p
         }
-    }
-
-    // MARK: - Crossfeed
-
-    func setCrossfeedIntensity(_ value: Float) {
-        crossfeed.setIntensity(value)
-    }
-
-    func setCrossfeedCutoff(_ hz: Float) {
-        crossfeed.setCutoff(hz)
-    }
-
-    // MARK: - Loudness compensation
-
-    /// Update the loudness offset (dB, clamped to [−40, 0]) and persist. The
-    /// processor recomputes the six-biquad cascade, the active flag, and a
-    /// headroom attenuation in a single lock acquisition; the audio thread
-    /// picks the new state up on its next callback.
-    func setLoudnessOffset(_ dB: Float) {
-        let clamped = Self.clampLoudness(dB)
-        if clamped == loudnessOffsetDB { return }
-        loudnessOffsetDB = clamped
-        UserDefaults.standard.set(Double(clamped), forKey: Self.loudnessOffsetDefaultsKey)
-        eqProcessor.publishLoudness(offsetDB: clamped)
-    }
-
-    private static func clampLoudness(_ dB: Float) -> Float {
-        min(max(dB, loudnessOffsetRange.lowerBound), loudnessOffsetRange.upperBound)
     }
 
     // MARK: - A/B comparison

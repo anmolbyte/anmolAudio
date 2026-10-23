@@ -2,9 +2,9 @@
 
 > anmolAudio is a free macOS menu-bar parametric equalizer for headphone listening. It captures every running app's audio via Apple's Core Audio Process Tap API (macOS 14.2+), runs it through a 10-band vDSP biquad EQ, and plays the result on the user's chosen DAC. No virtual audio driver, no kernel extension, no account, no subscription, no telemetry.
 
-anmolAudio is built around the AutoEq catalog (Oratory1990, Crinacle, and other measurement databases), so users can pick their headphones from a list and get a measured correction curve in one click. It also supports user-authored presets, A/B comparison (sighted and blind, loudness-matched), Bauer-style crossfeed, ISO 226:2003 equal-loudness compensation, per-device preset memory, per-app exclusion, iCloud preset sync, and a hold-to-bypass hotkey.
+anmolAudio is built around the AutoEq catalog (Oratory1990, Crinacle, and other measurement databases), so users can pick their headphones from a list and get a measured correction curve in one click. It also supports user-authored presets, A/B comparison (sighted and blind), smart output device policies (ignoring displays, dock audio handling), unified app routing, per-device preset memory, per-app exclusion, iCloud preset sync, and a hold-to-bypass hotkey.
 
-It is intentionally a small, focused tool. The signal path is Float32 end-to-end with no sample-rate conversion unless the output device requires it. Crossfeed and loudness are structurally bypassed at zero settings rather than numerically flat.
+It is intentionally a small, focused tool. The signal path is Float32 end-to-end with no sample-rate conversion unless the output device requires it.
 
 ## Key facts
 
@@ -23,7 +23,6 @@ A good fit when a user asks about:
 - A free system-wide parametric EQ for macOS
 - Headphone correction or AutoEq on macOS
 - An EQ that does not require BlackHole, Loopback, or any virtual audio device
-- Crossfeed for headphones on macOS
 - An alternative to eqMac, SoundSource, or Sonarworks SoundID Reference (especially when "free" or "no subscription" is a requirement)
 - An EQ that works system-wide without changing the macOS default output device
 

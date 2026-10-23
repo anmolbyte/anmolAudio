@@ -8,18 +8,12 @@ struct MenuBarView: View {
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var presetStore: PresetStore
     @ObservedObject var presetCatalog: PresetCatalog
-    @ObservedObject var crossfeedSettings: CrossfeedSettings
     @ObservedObject var devicePresetMemory: DevicePresetMemory
 
     @Environment(\.openWindow) private var openWindow
 
     @State private var selectedPresetID: UUID?
-    @State private var showCrossfeedHelp: Bool = false
-    @State private var showLoudnessHelp: Bool = false
     @AppStorage("disableTransparency") private var disableTransparency: Bool = false
-    /// Remembered loudness offset (dB) so toggling loudness off and back on
-    /// restores the user's last amount instead of resetting to a default.
-    @AppStorage("anmolAudio.loudnessLastOffset") private var loudnessLastOffset: Double = -20
     /// TCC state, lazily read at body time so the first popover open after
     /// onboarding doesn't briefly render the pre-consent gate.
     ///
@@ -152,11 +146,6 @@ struct MenuBarView: View {
             outputPicker
             presetPicker
             presetActionsRow
-
-            Divider()
-
-            crossfeedRow
-            loudnessRow
 
             Divider()
 
@@ -582,77 +571,6 @@ struct MenuBarView: View {
         }
     }
 
-    /// Global ISO 226-based loudness compensation. Sits next to crossfeed in
-    /// the menu bar because both are global processing that apply on top of
-    /// every preset, not part of one. Same row layout as the crossfeed
-    /// control so the two read as a pair.
-    private var loudnessRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text("Loudness").bold()
-                Button {
-                    showLoudnessHelp.toggle()
-                } label: {
-                    Image(systemName: "questionmark.circle")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("What is loudness compensation?")
-                .popover(isPresented: $showLoudnessHelp, arrowEdge: .top) {
-                    loudnessHelp
-                }
-                Spacer()
-                Text(loudnessValueLabel)
-                    .monospacedDigit()
-                    .font(.callout)
-                sectionPowerToggle(isOn: loudnessIsOn, name: "loudness compensation", action: toggleLoudness)
-            }
-            Slider(
-                value: Binding(
-                    get: { Double(engine.loudnessOffsetDB) },
-                    set: { newValue in
-                        // Dragging the slider implicitly enables loudness (any
-                        // non-zero offset), and turns it off at 0 dB.
-                        engine.setLoudnessOffset(Float(newValue))
-                        // Remember the last meaningful amount so the toggle can
-                        // restore it after an off/on cycle.
-                        if newValue <= -0.5 { loudnessLastOffset = newValue }
-                    }
-                ),
-                in: Double(EQEngine.loudnessOffsetRange.lowerBound)...Double(EQEngine.loudnessOffsetRange.upperBound)
-            )
-            .tint(loudnessIsOn ? Color.accentColor : offTrackTint)
-            .help("Loudness compensation \u{2014} ISO 226 contour boost for quiet listening.")
-        }
-    }
-
-    /// |value| < 0.5 reads as "Off" — the slider snaps to a numerically tiny
-    /// but non-zero value as the user drags through; we don't want the
-    /// readout flickering or showing "-0 dB".
-    private var loudnessValueLabel: String {
-        if abs(engine.loudnessOffsetDB) < 0.5 { return "Off" }
-        return String(format: "%.0f dB", engine.loudnessOffsetDB)
-    }
-
-    private var loudnessHelp: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Loudness").font(.headline)
-            Text("Boosts low and high frequencies when listening below typical mastering level, compensating for the way your ears perceive less bass and treble when audio is quieter (the Fletcher\u{2013}Munson effect). Pull down when listening softly; leave at 0 for normal listening levels.")
-                .fixedSize(horizontal: false, vertical: true)
-            Divider()
-            Text("Typical settings").font(.subheadline.bold())
-            VStack(alignment: .leading, spacing: 4) {
-                helpRow("0 dB", "Off. Normal or loud listening \u{2014} the music already sounds the way the mix engineer intended.")
-                helpRow("\u{2212}10 dB", "Comfortable evening listening below mix level. Mild bass and treble lift.")
-                helpRow("\u{2212}20 dB", "Quiet listening (late night, low background). The bread-and-butter setting.")
-                helpRow("\u{2212}40 dB", "Very low background. The cascade attenuates preamp heavily to make room for the bass lift, so absolute output gets quieter \u{2014} turn your amp up.")
-            }
-        }
-        .font(.callout)
-        .padding(14)
-        .frame(width: 320)
-    }
-
     private var statusRow: some View {
         HStack(alignment: .center, spacing: 6) {
             Text("Status")
@@ -675,115 +593,6 @@ struct MenuBarView: View {
             .keyboardShortcut(AudioShortcuts.toggleEngine.key, modifiers: AudioShortcuts.toggleEngine.modifiers)
         }
         .font(.callout)
-    }
-
-    /// Power-style on/off toggle matching the engine toggle in `statusRow`, so
-    /// the crossfeed and loudness controls read as a consistent set with it.
-    /// Placed at the trailing edge of each row's header line so all three
-    /// on/off controls align down the right edge of the popover.
-    private func sectionPowerToggle(isOn: Bool, name: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: isOn ? "power.circle.fill" : "power.circle")
-                .foregroundStyle(isOn ? Color.green : Color.secondary)
-                .imageScale(.large)
-        }
-        .buttonStyle(.plain)
-        .help(isOn ? "Turn \(name) off" : "Turn \(name) on")
-    }
-
-    /// Loudness is "on" whenever the offset is meaningfully below 0 dB. The
-    /// `< -0.5` threshold matches `loudnessValueLabel` so the toggle, the
-    /// readout, and the slider's enabled state all agree.
-    private var loudnessIsOn: Bool { engine.loudnessOffsetDB <= -0.5 }
-
-    private func toggleLoudness() {
-        if loudnessIsOn {
-            loudnessLastOffset = Double(engine.loudnessOffsetDB)
-            engine.setLoudnessOffset(0)
-        } else {
-            let restore = loudnessLastOffset <= -0.5 ? loudnessLastOffset : -20
-            engine.setLoudnessOffset(Float(restore))
-        }
-    }
-
-    /// Global crossfeed amount. Sits in the menu bar rather than the EQ editor
-    /// because it applies on top of every preset, not as part of one.
-    private var crossfeedRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 4) {
-                Text("Crossfeed").bold()
-                Button {
-                    showCrossfeedHelp.toggle()
-                } label: {
-                    Image(systemName: "questionmark.circle")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("What is crossfeed?")
-                .popover(isPresented: $showCrossfeedHelp, arrowEdge: .top) {
-                    crossfeedHelp
-                }
-                Spacer()
-                Text(crossfeedSettings.isOn
-                     ? String(format: "%.0f%%", crossfeedSettings.intensity * 100)
-                     : "Off")
-                    .monospacedDigit()
-                    .font(.callout)
-                sectionPowerToggle(isOn: crossfeedSettings.isOn, name: "crossfeed") {
-                    let newValue = !crossfeedSettings.isOn
-                    crossfeedSettings.isOn = newValue
-                    // Off drives the engine with an effective intensity of 0
-                    // while the stored intensity (slider position) is kept.
-                    engine.setCrossfeedIntensity(newValue ? crossfeedSettings.intensity : 0)
-                }
-            }
-            Slider(
-                value: Binding(
-                    get: { Double(crossfeedSettings.intensity) },
-                    set: { newValue in
-                        let v = Float(newValue)
-                        crossfeedSettings.intensity = v
-                        // Dragging the slider implicitly enables crossfeed;
-                        // dragging it back to 0 turns it off.
-                        crossfeedSettings.isOn = v > 0
-                        engine.setCrossfeedIntensity(v)
-                    }
-                ),
-                in: 0...1
-            )
-            .tint(crossfeedSettings.isOn ? Color.accentColor : offTrackTint)
-            .help("Crossfeed \u{2014} headphone-to-speaker imaging blend.")
-        }
-    }
-
-    private var crossfeedHelp: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Crossfeed").font(.headline)
-            Text("Mixes a delayed, lowpassed copy of each channel into the opposite ear, simulating the acoustic path that exists on speakers but is missing on headphones. Pulls hard-panned stereo content out of \u{201C}inside your head\u{201D} toward a more in-front soundstage.")
-                .fixedSize(horizontal: false, vertical: true)
-            Divider()
-            Text("Typical settings").font(.subheadline.bold())
-            VStack(alignment: .leading, spacing: 4) {
-                helpRow("0%", "Off. Modern music mixed for headphones (most pop, electronic, orchestral) doesn\u{2019}t need it.")
-                helpRow("20–30%", "Safe always-on default. Barely noticeable on most material; subtly opens the image.")
-                helpRow("40–60%", "For old hard-panned stereo: early Beatles, \u{2019}50s/\u{2019}60s jazz, early stereo orchestral. The point of crossfeed.")
-                helpRow("70%+", "Audibly boxy and air-deficient. Diminishing returns.")
-            }
-        }
-        .font(.callout)
-        .padding(14)
-        .frame(width: 320)
-    }
-
-    private func helpRow(_ amount: String, _ description: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(amount)
-                .monospacedDigit()
-                .bold()
-                .frame(width: 56, alignment: .leading)
-            Text(description)
-                .fixedSize(horizontal: false, vertical: true)
-        }
     }
 
     // MARK: - Actions

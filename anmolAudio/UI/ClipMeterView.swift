@@ -147,7 +147,7 @@ struct ClipMeterView: View {
     private var helpContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Output peak").font(.headline)
-            Text("Live peak level of the EQ + loudness output, left and right. The scale runs from \u{2212}60 dB up to 0 dB at the right edge \u{2014} the digital ceiling. Samples above 0 dB get flat-topped and start to sound harsh on transients.")
+            Text("Live peak level of the EQ output, left and right. The scale runs from \u{2212}60 dB up to 0 dB at the right edge \u{2014} the digital ceiling. Samples above 0 dB get flat-topped and start to sound harsh on transients.")
                 .fixedSize(horizontal: false, vertical: true)
             Text("The red dot latches whenever any sample hits the ceiling and stays lit for 2 s after the last clip, so brief clipping doesn\u{2019}t flash past unseen. Click the meter to clear it.")
                 .fixedSize(horizontal: false, vertical: true)

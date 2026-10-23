@@ -14,7 +14,6 @@ struct anmolAudioApp: App {
     @StateObject private var presetStore: PresetStore
     @StateObject private var presetCatalog = PresetCatalog()
     @StateObject private var engine = EQEngine()
-    @StateObject private var crossfeedSettings = CrossfeedSettings()
     @StateObject private var excludedAppsStore = ExcludedAppsStore()
     @StateObject private var devicePresetMemory = DevicePresetMemory()
     @StateObject private var updater = UpdaterController()
@@ -34,7 +33,6 @@ struct anmolAudioApp: App {
                 deviceManager: deviceManager,
                 presetStore: presetStore,
                 presetCatalog: presetCatalog,
-                crossfeedSettings: crossfeedSettings,
                 devicePresetMemory: devicePresetMemory
             )
         } label: {
@@ -47,8 +45,7 @@ struct anmolAudioApp: App {
                 devicePresetMemory: devicePresetMemory,
                 burnInTracker: burnInTracker,
                 outputVolumeMonitor: outputVolumeMonitor,
-                excludedAppsStore: excludedAppsStore,
-                crossfeedSettings: crossfeedSettings
+                excludedAppsStore: excludedAppsStore
             )
         }
         .menuBarExtraStyle(.window)
@@ -215,7 +212,7 @@ struct anmolAudioApp: App {
         // not here. App-level `@StateObject` wrappedValue accesses during init
         // can hit a transient instance that SwiftUI discards before binding the
         // persistent storage, so anything we'd schedule from this scope would
-        // run against a dead engine. The same caveat applies to wiring crossfeed,
+        // run against a dead engine. The same caveat applies to wiring
         // excluded apps, and the app delegate's engine reference — that happens from
         // `MenuBarLabel.task` (see `runLaunchCoordinator`'s call site) where
         // the persistent engine is guaranteed.
@@ -274,7 +271,6 @@ private struct MenuBarLabel: View {
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var outputVolumeMonitor: OutputVolumeMonitor
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
-    @ObservedObject var crossfeedSettings: CrossfeedSettings
 
     @Environment(\.openWindow) private var openWindow
 
@@ -330,10 +326,8 @@ private struct MenuBarLabel: View {
                 guard !didRunLaunchCoordinator else { return }
                 didRunLaunchCoordinator = true
 
-                // Seed the persistent engine with initial crossfeed settings and excluded apps
+                // Seed the persistent engine with output preferences and excluded apps
                 engine.outputPreferences = outputPreferences
-                engine.setCrossfeedIntensity(crossfeedSettings.isOn ? crossfeedSettings.intensity : 0)
-                engine.setCrossfeedCutoff(crossfeedSettings.cutoff)
                 engine.excludedAppsStore = excludedAppsStore
                 excludedAppsStore.onChange = { [weak engine] in
                     engine?.reEnumerateTapTargets()

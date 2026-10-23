@@ -52,7 +52,7 @@ final class BiquadCascade {
     }
 
     /// Zero the IIR delay-line state. No allocation, audio-thread safe; the
-    /// loudness cascade uses this when transitioning to bypass so residual
+    /// Cascade uses this when transitioning to bypass so residual
     /// state can't bleed into the next activation.
     func reset() {
         for i in delayLine.indices {

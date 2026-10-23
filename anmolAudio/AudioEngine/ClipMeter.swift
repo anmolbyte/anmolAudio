@@ -5,7 +5,7 @@ import os
 /// Per-block peak meter + sticky-clip latch for the post-EQ output signal.
 ///
 /// The audio thread calls `submit` once per IOProc callback with the
-/// post-cascade (post-loudness, pre-output) L/R buffers. `vDSP_maxmgv` reads
+/// post-cascade (pre-output) L/R buffers. `vDSP_maxmgv` reads
 /// the block peak per channel; that peak feeds an envelope follower with a
 /// ~300 ms exponential release so the meter stays visible long enough for the
 /// user to see momentary peaks. A separate sticky flag latches whenever any
