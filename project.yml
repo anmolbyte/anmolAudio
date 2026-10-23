@@ -61,7 +61,7 @@ targets:
             NSUbiquitousContainerIsDocumentScopePublic: true
             NSUbiquitousContainerSupportedFolderLevels: Any
             NSUbiquitousContainerName: anmolAudio
-        SUFeedURL: "https://anmolaudio.app/appcast.xml"
+        SUFeedURL: "https://anmolbyte.github.io/anmolAudio/appcast.xml"
         SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
     entitlements:
       path: anmolAudio/anmolAudio.entitlements

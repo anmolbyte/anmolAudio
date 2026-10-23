@@ -45,7 +45,7 @@
 		</dict>
 	</dict>
 	<key>SUFeedURL</key>
-	<string>https://anmolaudio.app/appcast.xml</string>
+	<string>https://anmolbyte.github.io/anmolAudio/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
 </dict>
