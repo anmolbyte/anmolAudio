@@ -147,7 +147,7 @@ jobs:
 
           TAP="$RUNNER_TEMP/homebrew-anmolAudio"
           git clone --depth 1 \
-            "https://x-access-token:${TAP_TOKEN}@github.com/lsjoberg/homebrew-anmolAudio" "$TAP"
+            "https://x-access-token:${TAP_TOKEN}@github.com/anmolbyte/homebrew-anmolAudio" "$TAP"
           CASK="$TAP/Casks/anmolAudio.rb"
           sed -i '' -E "s/^  version \".*\"/  version \"${VERSION}\"/" "$CASK"
           sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"${SHA}\"/" "$CASK"

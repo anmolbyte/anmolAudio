@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Submit build/anmolAudio-$VERSION}.dmg to Apple's notary service, wait for the
+# Submit build/anmolAudio-$VERSION.dmg to Apple's notary service, wait for the
 # verdict, and staple the ticket. Skips with exit 0 if APPLE_ID is unset
 # (dry-run mode).
 #
