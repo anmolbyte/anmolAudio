@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bgGrad" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#121929"/>
+      <stop offset="100%" stop-color="#0a0f1a"/>
+    </linearGradient>
+    <radialGradient id="centerGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="barGrad" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.12"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS squircle background -->
+  <rect x="51.2" y="51.2" width="921.6" height="921.6" rx="206" fill="url(#bgGrad)" stroke="#ffffff" stroke-opacity="0.12" stroke-width="12"/>
+  <rect x="51.2" y="51.2" width="921.6" height="921.6" rx="206" fill="url(#centerGlow)"/>
+  <rect x="51.2" y="51.2" width="921.6" height="921.6" rx="206" fill="url(#gloss)"/>
+
+  <!-- Waveform / Equalizer Bars -->
+  <g fill="url(#barGrad)">
+    <!-- 7 bars centered within 512px width -->
+    <rect x="256" y="440" width="39.4" height="144" rx="19.7"/>
+    <rect x="334.8" y="378" width="39.4" height="268" rx="19.7"/>
+    <rect x="413.6" y="312" width="39.4" height="400" rx="19.7"/>
+    <rect x="492.3" y="256" width="39.4" height="512" rx="19.7"/>
+    <rect x="571.1" y="327" width="39.4" height="370" rx="19.7"/>
+    <rect x="649.9" y="388" width="39.4" height="248" rx="19.7"/>
+    <rect x="728.6" y="456" width="39.4" height="112" rx="19.7"/>
+  </g>
+</svg>

@@ -1,0 +1,80 @@
+name: anmolAudio
+options:
+  bundleIdPrefix: app.anmol
+  deploymentTarget:
+    macOS: "14.2"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+configs:
+  Debug: debug
+  Release: release
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    ENABLE_HARDENED_RUNTIME: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    SPARKLE_PUBLIC_ED_KEY: ""
+  configs:
+    Debug:
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "-"
+      DEVELOPMENT_TEAM: ""
+    Release:
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "Developer ID Application"
+      OTHER_CODE_SIGN_FLAGS: "--timestamp --options runtime"
+targets:
+  anmolAudio:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.2"
+    sources:
+      - path: anmolAudio
+        excludes:
+          - "Info.plist"
+          - "anmolAudio.entitlements"
+    dependencies:
+      - package: Sparkle
+    info:
+      path: anmolAudio/Info.plist
+      properties:
+        CFBundleName: anmolAudio
+        CFBundleDisplayName: anmolAudio
+        CFBundleIdentifier: app.anmol.anmolAudio
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundlePackageType: APPL
+        CFBundleIconName: AppIcon
+        LSUIElement: true
+        LSMinimumSystemVersion: "14.2"
+        LSApplicationCategoryType: "public.app-category.music"
+        NSAudioCaptureUsageDescription: "anmolAudio captures system audio via a Core Audio process tap so it can apply EQ before routing audio to your output device."
+        NSHighResolutionCapable: true
+        NSUbiquitousContainers:
+          iCloud.app.anmol.anmolAudio:
+            NSUbiquitousContainerIsDocumentScopePublic: true
+            NSUbiquitousContainerSupportedFolderLevels: Any
+            NSUbiquitousContainerName: anmolAudio
+        SUFeedURL: "https://anmolaudio.app/appcast.xml"
+        SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
+    entitlements:
+      path: anmolAudio/anmolAudio.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.device.audio-input: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.anmol.anmolAudio
+        PRODUCT_NAME: anmolAudio
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: anmolAudio/Info.plist
+        CODE_SIGN_ENTITLEMENTS: anmolAudio/anmolAudio.entitlements
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

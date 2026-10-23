@@ -1,0 +1,23 @@
+## Build artifacts
+build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+
+## XcodeGen
+*.xcodeproj
+
+## macOS
+.DS_Store
+
+## Swift Package Manager
+.swiftpm/
+Packages/
+Package.resolved
+.build/
+
+## Node / Cloudflare Worker tooling
+node_modules/
+.wrangler/

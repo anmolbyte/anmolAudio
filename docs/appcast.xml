@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>anmolAudio</title>
+    <link>https://anmolbyte.github.io/anmolAudio/appcast.xml</link>
+    <description>System-wide audio EQ for macOS.</description>
+    <language>en</language>
+    <item>
+      <title>anmolAudio 0.11.1</title>
+      <pubDate>Fri, 11 Sep 2026 19:03:48 +0000</pubDate>
+      <sparkle:version>34</sparkle:version>
+      <sparkle:shortVersionString>0.11.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.2</sparkle:minimumSystemVersion>
+      <description><![CDATA[<h3 dir="auto">Bug Fixes</h3>
+<ul dir="auto">
+<li>don't fall back to the sub-device's input when the tap has no buffer (<a href="https://github.com/anmolbyte/anmolAudio/commit/ad58e1e8e937bbdcd6fc0571b5b5900fee02bb41">ad58e1e</a>)</li>
+<li>skip the output device's own inputs when reading the process tap (<a href="https://github.com/anmolbyte/anmolAudio/commit/b761e125ce73727251effdc82aa068fe273695c1">b761e12</a>)</li>
+</ul><p style="margin-top:1.5em;font-size:0.9em"><a href="https://github.com/anmolbyte/anmolAudio/releases/tag/v0.11.1">View full release on GitHub →</a></p>]]></description>
+      <enclosure
+        url="https://github.com/anmolbyte/anmolAudio/releases/download/v0.11.1/anmolAudio-0.11.1.dmg"
+        length="2713449"
+        type="application/octet-stream"
+        sparkle:edSignature="j8R6G2HSf8MlhgAW5buZVKdVNH5VbKF/NEUIYCDSZ6zIcIcwJ7Wi5yvBzXNjFHiUhIHNp/QVQDaCH5be8+4GAg==" />
+    </item>
+  </channel>
+</rss>

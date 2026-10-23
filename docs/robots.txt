@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://anmolbyte.github.io/anmolAudio/sitemap.xml

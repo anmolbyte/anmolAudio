@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>anmolAudio — system-wide audio EQ for macOS</title>
+  <meta name="description" content="Headphone correction for macOS with the AutoEq catalog built in. A 10-band parametric EQ that taps every app's audio via Core Audio and plays the result on your DAC. Free, no account, no driver to install.">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <meta property="og:title" content="anmolAudio — system-wide audio EQ for macOS">
+  <meta property="og:description" content="Headphone correction for macOS with the AutoEq catalog built in. Free, open source, no account, no driver to install.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="anmolAudio">
+  <meta property="og:url" content="https://anmolbyte.github.io/anmolAudio/">
+  <meta property="og:image" content="https://anmolbyte.github.io/anmolAudio/screenshots/og.png">
+  <meta property="og:image:width" content="2408">
+  <meta property="og:image:height" content="1260">
+  <meta property="og:image:alt" content="anmolAudio menu bar EQ for macOS with the AutoEq catalog built in">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="anmolAudio — system-wide audio EQ for macOS">
+  <meta name="twitter:description" content="Headphone correction for macOS with the AutoEq catalog built in. Free, open source, no driver.">
+  <meta name="twitter:image" content="https://anmolbyte.github.io/anmolAudio/screenshots/og.png">
+  <link rel="canonical" href="https://anmolbyte.github.io/anmolAudio/">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "anmolAudio",
+    "url": "https://anmolbyte.github.io/anmolAudio/",
+    "applicationCategory": "MultimediaApplication",
+    "applicationSubCategory": "Audio",
+    "operatingSystem": "macOS 14.2 or later",
+    "processorRequirements": "Apple Silicon or Intel",
+    "downloadUrl": "https://github.com/anmolbyte/anmolAudio/releases/latest/download/anmolAudio.dmg",
+    "softwareHelp": "https://github.com/anmolbyte/anmolAudio/blob/main/README.md",
+    "releaseNotes": "https://github.com/anmolbyte/anmolAudio/blob/main/CHANGELOG.md",
+    "image": "https://anmolbyte.github.io/anmolAudio/screenshots/og.png",
+    "screenshot": [
+      "https://anmolbyte.github.io/anmolAudio/screenshots/menu-bar.png",
+      "https://anmolbyte.github.io/anmolAudio/screenshots/editor.png",
+      "https://anmolbyte.github.io/anmolAudio/screenshots/preset-library.png",
+      "https://anmolbyte.github.io/anmolAudio/screenshots/ab-blind.png"
+    ],
+    "description": "Free, system-wide parametric EQ for headphone listening on macOS. Captures every app's audio via Core Audio Process Tap, runs a 10-band biquad EQ tuned to your headphones from the AutoEq catalog, and plays the result on your DAC. No virtual driver, no account, no telemetry.",
+    "featureList": [
+      "10-band parametric EQ (low shelf, 8 peaks, high shelf)",
+      "AutoEq catalog built in (Oratory1990, Crinacle, etc.)",
+      "Bauer-style crossfeed",
+      "ISO 226:2003 equal-loudness compensation",
+      "A/B compare (sighted and blind, loudness-matched)",
+      "Per-device preset memory and auto-suggest",
+      "Per-app exclusion by bundle ID",
+      "Hold-to-bypass hotkey",
+      "iCloud preset sync",
+      "No virtual audio driver"
+    ],
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "license": "https://github.com/anmolbyte/anmolAudio/blob/main/LICENSE",
+    "codeRepository": "https://github.com/anmolbyte/anmolAudio",
+    "isAccessibleForFree": true
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <a class="brand" href="/" aria-label="anmolAudio — home">
+      <svg class="brand-mark" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+        <path class="brand-band" d="M 16 52 Q 50 10, 84 52" stroke-width="6.5" stroke-linecap="round"/>
+        <circle class="brand-cup" cx="16" cy="60" r="13"/>
+        <circle class="brand-cup" cx="84" cy="60" r="13"/>
+        <circle class="brand-eye" cx="40" cy="58" r="5"/>
+        <path class="brand-wink" d="M 54 60 Q 60 52, 66 60" stroke-width="5" stroke-linecap="round"/>
+        <path class="brand-mouth" d="M 43 75 Q 50 77, 57 70" stroke-width="5" stroke-linecap="round"/>
+      </svg>
+      <span class="wordmark">anmolAudio</span>
+    </a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#compare">Compare</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/anmolbyte/anmolAudio">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>Headphone correction for macOS,<br>with AutoEq built in.</h1>
+      <p class="tagline">
+        anmolAudio taps every app's audio via Apple's Core Audio Process Tap, runs
+        it through a 10-band parametric EQ tuned to your headphones from the
+        AutoEq catalog, and plays the result on your DAC. Free, no account,
+        no driver to install.
+      </p>
+
+      <a class="download" href="https://github.com/anmolbyte/anmolAudio/releases/latest/download/anmolAudio.dmg">
+        Download for macOS
+      </a>
+      <div class="install-brew">
+        <span class="install-or">or install with Homebrew</span>
+        <div class="brew-cmd">
+          <code id="brew-cmd">brew install --cask anmolbyte/anmolAudio/anmolAudio</code>
+          <button type="button" class="brew-copy" data-copy="brew-cmd" aria-label="Copy command to clipboard">Copy</button>
+        </div>
+      </div>
+      <p class="requirements">
+        <span>Requires macOS 14.2 or later · Apple Silicon &amp; Intel</span>
+      </p>
+      <ul class="trust" aria-label="At a glance">
+        <li>Open source (MIT)</li>
+        <li>Free — no account</li>
+        <li>No telemetry</li>
+        <li>Signed &amp; notarized</li>
+      </ul>
+    </section>
+
+    <section class="screenshot hero-screenshot" aria-label="anmolAudio menu bar interface">
+      <picture>
+        <source srcset="screenshots/menu-bar-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="screenshots/menu-bar.png" alt="anmolAudio menu bar popover with engine on, preset selected, and output device set" loading="eager">
+      </picture>
+    </section>
+
+    <section class="how" aria-labelledby="how-title">
+      <h2 id="how-title">How it works</h2>
+      <p class="section-lede">
+        anmolAudio doesn't add a device to Sound Settings, doesn't load a kernel
+        extension, and doesn't replace your output. macOS routes the audio
+        through Apple's own Process Tap API — anmolAudio reads it, EQs it, and
+        sends it on to whichever DAC you've chosen.
+      </p>
+      <ol class="pipeline" aria-label="Signal flow">
+        <li>
+          <div class="pipeline-step">Any app</div>
+          <p>Music, Spotify, browser, conferencing — anything using Core Audio.</p>
+        </li>
+        <li>
+          <div class="pipeline-step">Process Tap</div>
+          <p>Apple's macOS&nbsp;14.2 API. No driver, no extension, no orange mic indicator.</p>
+        </li>
+        <li>
+          <div class="pipeline-step">10-band EQ</div>
+          <p>Float32 vDSP biquad cascade, plus crossfeed and loudness compensation.</p>
+        </li>
+        <li>
+          <div class="pipeline-step">Your DAC</div>
+          <p>Played out via HAL Audio Unit — no resampling unless your device requires it.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section id="features" class="features-grid" aria-labelledby="features-title">
+      <h2 id="features-title">Everything that's in the menu bar</h2>
+
+      <div class="feature feature--wide">
+        <div class="feature-text">
+          <h3>Per-headphone presets, from the AutoEq catalog</h3>
+          <p>
+            Browse the whole AutoEq library — Oratory1990 over-ears, Crinacle
+            IEMs, in-app search by brand. Enable a few for your headphones
+            and they're one click away from the menu bar. Fork any catalog
+            preset to tweak, with the original kept on screen as a dashed
+            reference curve.
+          </p>
+        </div>
+        <div class="feature-shot">
+          <picture>
+            <source srcset="screenshots/preset-library-dark.png" media="(prefers-color-scheme: dark)">
+            <img src="screenshots/preset-library.png" alt="Preset library showing AutoEq catalog entries" loading="lazy">
+          </picture>
+        </div>
+      </div>
+
+      <div class="feature feature--wide">
+        <div class="feature-shot">
+          <picture>
+            <source srcset="screenshots/editor-dark.png" media="(prefers-color-scheme: dark)">
+            <img src="screenshots/editor.png" alt="EQ editor showing curve, bands, spectrum overlay, and clip meter" loading="lazy">
+          </picture>
+        </div>
+        <div class="feature-text">
+          <h3>An editor for when you want to tune it yourself</h3>
+          <p>
+            Ten bands — low shelf, eight peaks, high shelf — with live preview,
+            a post-EQ spectrum analyzer, and a sticky clip meter. Edits apply
+            to the running engine instantly. Edits to a built-in preset
+            silently fork into your library; the original stays one click away.
+          </p>
+        </div>
+      </div>
+
+      <div class="feature">
+        <h3>A/B compare, sighted or blind</h3>
+        <p>
+          Switch between two presets without leaving the editor. Blind mode
+          masks which is which and records your votes; broadband RMS
+          loudness-matches both so a louder curve can't win on volume alone.
+        </p>
+        <picture>
+          <source srcset="screenshots/ab-blind-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="screenshots/ab-blind.png" alt="A/B blind comparison view with trial counter" loading="lazy">
+        </picture>
+      </div>
+
+      <div class="feature">
+        <h3>Per-device memory &amp; auto-suggest</h3>
+        <p>
+          anmolAudio remembers the last preset per output device — switch DACs and
+          the right curve loads. First time you plug in headphones it knows,
+          it offers to enable the matching AutoEq preset.
+        </p>
+        <picture>
+          <source srcset="screenshots/auto-detect-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="screenshots/auto-detect.png" alt="Auto-detect banner suggesting a matching preset" loading="lazy">
+        </picture>
+      </div>
+
+      <div class="feature">
+        <h3>Crossfeed &amp; loudness</h3>
+        <p>
+          Bauer-style crossfeed with adjustable intensity and head-shadow
+          cutoff for binaural-friendly imaging. An ISO 226:2003 equal-loudness
+          curve compensates for low-volume listening — the Fletcher-Munson
+          smile, dialed in to a phon offset, not guessed at.
+        </p>
+        <picture>
+          <source srcset="screenshots/crossfeed-loudness-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="screenshots/crossfeed-loudness.png" alt="Crossfeed and loudness sliders" loading="lazy">
+        </picture>
+      </div>
+
+      <div class="feature">
+        <h3>Per-app exclusion</h3>
+        <p>
+          Some apps manage their own EQ — exclude them by bundle ID and
+          their audio bypasses anmolAudio entirely. Updated live; no engine
+          restart needed.
+        </p>
+        <picture>
+          <source srcset="screenshots/excluded-apps-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="screenshots/excluded-apps.png" alt="Settings panel listing excluded apps" loading="lazy">
+        </picture>
+      </div>
+
+      <div class="feature">
+        <h3>Keyboard-driven, top to bottom</h3>
+        <p>
+          Every actionable control has a shortcut and a tooltip that names it.
+          ⌘/ pops a cheat sheet grouped by screen so you can learn them in one
+          glance. Even the bypass is a key — hold ⌥B globally to momentarily
+          flatten the EQ (it's an A/B slot swap, so the transition is click-free).
+        </p>
+        <picture>
+          <source srcset="screenshots/shortcuts-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="screenshots/shortcuts.png" alt="Keyboard Shortcuts cheat sheet listing every binding grouped by screen" loading="lazy">
+        </picture>
+      </div>
+
+      <div class="feature">
+        <h3>iCloud preset sync</h3>
+        <p>
+          Flip a switch in Settings and your preset library follows you to
+          every Mac you sign into. anmolAudio watches the file, debounces echo
+          writes, and reloads cleanly on save.
+        </p>
+        <picture>
+          <source srcset="screenshots/sync-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="screenshots/sync.png" alt="Settings sync tab" loading="lazy">
+        </picture>
+      </div>
+    </section>
+
+    <section id="compare" class="compare" aria-labelledby="compare-title">
+      <h2 id="compare-title">How it compares</h2>
+      <p class="section-lede">
+        anmolAudio's niche is corrective headphone EQ. Here's how it stacks up
+        against the apps people usually look at first.
+      </p>
+      <div class="compare-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col"><span class="sr-only">Capability</span></th>
+              <th scope="col">anmolAudio</th>
+              <th scope="col">eqMac</th>
+              <th scope="col">SoundSource</th>
+              <th scope="col">SoundID Reference</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Price</th><td>Free</td><td>Free / paid tier</td><td>Paid</td><td>Subscription</td></tr>
+            <tr><th scope="row">Full AutoEq catalog</th><td class="yes">Yes</td><td>Paid tier</td><td>Curated subset</td><td>Proprietary DB</td></tr>
+            <tr><th scope="row">Blind A/B, loudness-matched</th><td class="yes">Yes</td><td class="no">No</td><td class="no">No</td><td>Sighted only</td></tr>
+            <tr><th scope="row">Crossfeed</th><td class="yes">Yes</td><td class="no">No</td><td>Add-on</td><td class="no">No</td></tr>
+            <tr><th scope="row">Loudness compensation</th><td class="yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+            <tr><th scope="row">No virtual audio driver</th><td class="yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+            <tr><th scope="row">System-wide capture</th><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+            <tr><th scope="row">Per-device memory</th><td class="yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="yes">Yes</td></tr>
+            <tr><th scope="row">iCloud preset sync</th><td class="yes">Yes</td><td class="no">No</td><td class="no">No</td><td>Account</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="compare-note">
+        Capability matrix as of writing — competitors change their plans
+        often. SoundSource and eqMac both have some form of AutoEQ-derived
+        headphone EQ; the row above is about whether the full open AutoEq
+        catalog is browsable in-app. Other tools worth a look for adjacent
+        jobs: Boom 3D and dSoniq Realphones (consumer enhancement and
+        mix-translation respectively), and a few newer utilities also use
+        the Process Tap API to skip the driver. If anything's wrong here,
+        open an issue.
+      </p>
+    </section>
+
+    <section class="privacy" aria-labelledby="privacy-title">
+      <h2 id="privacy-title">What it touches on your Mac</h2>
+      <ul>
+        <li>
+          <strong>One network destination:</strong> AutoEq's GitHub raw URL,
+          and only when you browse the catalog or refresh it. anmolAudio itself
+          phones nothing home — no analytics, no telemetry, no accounts.
+        </li>
+        <li>
+          <strong>Audio Capture (TCC) permission, granted once.</strong>
+          anmolAudio reads the system mixer via the Process Tap API — it does
+          <em>not</em> light up the orange mic indicator, because the tap
+          isn't a HAL input AU.
+        </li>
+        <li>
+          <strong>Three local locations:</strong>
+          <code>~/Library/Application&nbsp;Support/anmolAudio</code> for presets
+          and the AutoEq cache, <code>~/Library/Preferences/app.anmolAudio.anmolAudio.plist</code>
+          for settings, and the system-managed TCC grant. Each is independently
+          resettable — recipes in the README.
+        </li>
+      </ul>
+    </section>
+
+    <section id="faq" class="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title">FAQ</h2>
+
+      <details>
+        <summary>Where does the name &ldquo;anmolAudio&rdquo; come from?</summary>
+        <p>
+          Swedish, two meanings at once. <em>anmolAudio</em> is audiophile
+          slang for headphones &mdash; what you'd casually call a pair
+          of cans. It's also the verb <em>to fool</em>, as in to trick
+          someone. The mark holds both: headphones at first glance, a
+          winking face on the second.
+        </p>
+      </details>
+
+      <details>
+        <summary>Can I install it with Homebrew?</summary>
+        <p>
+          Yes: <code>brew install --cask anmolbyte/anmolAudio/anmolAudio</code>. That taps
+          <code>lsjoberg/homebrew-anmolAudio</code> and installs the same signed,
+          notarized build you'd get from the DMG. Updates still arrive in-app
+          via Sparkle, so <code>brew upgrade</code> is normally a no-op. To
+          remove it completely, including presets and settings, run
+          <code>brew uninstall --zap --cask anmolAudio</code>.
+        </p>
+      </details>
+
+      <details>
+        <summary>Does anmolAudio raise the orange microphone indicator?</summary>
+        <p>
+          No. anmolAudio reads tap samples via an <code>AudioDeviceIOProc</code> on
+          a private aggregate device — not via a HAL input AU — so the
+          orange indicator stays off. The <code>device.audio-input</code>
+          entitlement is required by Core Audio to deliver tap data once
+          TCC is granted, but the indicator is gated on a different API
+          path.
+        </p>
+      </details>
+
+      <details>
+        <summary>What about hi-res music players that use exclusive mode?</summary>
+        <p>
+          Apps that use HAL hog mode bypass Core Audio's mixer entirely and
+          can't be tapped — by anyone. Switch the app out of exclusive mode
+          if you want anmolAudio to EQ it. This isn't a anmolAudio limit; it's how
+          exclusive mode is supposed to work.
+        </p>
+      </details>
+
+      <details>
+        <summary>Will the next macOS update break it?</summary>
+        <p>
+          anmolAudio uses Apple's own Process Tap API (added in macOS 14.2). There
+          is no third-party driver, no kernel extension, no system audio
+          device that an OS update can invalidate. If Apple ever changes the
+          API, anmolAudio gets updated; you don't have to uninstall anything.
+        </p>
+      </details>
+
+      <details>
+        <summary>Is the audio path lossless?</summary>
+        <p>
+          Yes. Float32 internally, no sample-rate conversion unless your
+          output device requires it (most don't). Crossfeed and loudness are
+          structurally bypassed at zero settings — not just numerically
+          flat, but skipped entirely.
+        </p>
+      </details>
+
+      <details>
+        <summary>Why not <code>AVAudioEngine</code>?</summary>
+        <p>
+          Direct HAL Audio Unit means lower latency, no involuntary AGC,
+          and no opaque mixer behavior between us and the DAC. anmolAudio is the
+          last DSP stage before your hardware.
+        </p>
+      </details>
+
+      <details>
+        <summary>What conflicts with anmolAudio?</summary>
+        <p>
+          Other tap-based or HAL-intercepting tools — most commonly Rogue
+          Amoeba's ARK driver (SoundSource, Audio Hijack, Loopback) — can
+          intercept tap data before anmolAudio sees it. If the EQ path is silent
+          and ARK is loaded, quit the offending app and run
+          <code>launchctl bootout gui/$(id -u)/com.rogueamoeba.arkaudiod</code>.
+        </p>
+      </details>
+
+      <details>
+        <summary>What's the &ldquo;burn-in counter&rdquo; in Settings?</summary>
+        <p>
+          A per-output runtime tally &mdash; how many hours the engine has
+          spent driving each device. The name is a nod to the audiophile
+          tradition of burning in new headphones by playing audio through
+          them for tens or hundreds of hours, in the belief that the
+          diaphragms loosen up and the sound improves. The evidence is
+          contested at best; whether hour 200 sounds different from hour 1
+          is between you and your ears. anmolAudio just counts.
+        </p>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      <a href="https://github.com/anmolbyte/anmolAudio">GitHub</a> ·
+      <a href="https://github.com/anmolbyte/anmolAudio/blob/main/CHANGELOG.md">Changelog</a> ·
+      <a href="https://github.com/anmolbyte/anmolAudio/issues">Report an issue</a>
+    </p>
+  </footer>
+
+  <script>
+    document.querySelectorAll(".brew-copy").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var el = document.getElementById(btn.dataset.copy);
+        if (!el || !navigator.clipboard) return;
+        navigator.clipboard.writeText(el.textContent.trim()).then(function () {
+          var prev = btn.textContent;
+          btn.textContent = "Copied";
+          setTimeout(function () { btn.textContent = prev; }, 1500);
+        });
+      });
+    });
+  </script>
+</body>
+</html>
