@@ -11,7 +11,6 @@ struct SettingsView: View {
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
     @ObservedObject var outputPreferences: OutputSelectionPreferences
-    @ObservedObject var updater: UpdaterController
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var deviceManager: DeviceManager
 
@@ -19,7 +18,6 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsTab(
                 outputPreferences: outputPreferences,
-                updater: updater,
                 burnInTracker: burnInTracker,
                 deviceManager: deviceManager
             )
@@ -69,7 +67,6 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @ObservedObject var outputPreferences: OutputSelectionPreferences
-    @ObservedObject var updater: UpdaterController
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var deviceManager: DeviceManager
 
@@ -79,40 +76,28 @@ private struct GeneralSettingsTab: View {
     @AppStorage("suspendDuringVoIP") private var suspendDuringVoIP: Bool = true
     @AppStorage(EQEngine.followNewAudioAppsKey) private var followNewAudioApps: Bool = true
     @AppStorage(EQEngine.muteOnDeviceRateChangeKey) private var muteOnDeviceRateChange: Bool = true
-    @AppStorage(MenuBarIconStyle.storageKey) private var menuBarIconStyle: MenuBarIconStyle = .logo
     @AppStorage("disableTransparency") private var disableTransparency: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Start at login", isOn: $launchAtLogin)
-                    .toggleStyle(.switch)
-                    .help("Register anmolAudio with Login Items so it launches when you sign in")
-                    .onChange(of: launchAtLogin, initial: false) { _, newValue in
-                        toggleLaunchAtLogin(newValue)
-                    }
-                Text("anmolAudio launches automatically when you sign in.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Toggle("Start at login", isOn: $launchAtLogin)
+                .toggleStyle(.checkbox)
+                .help("Register anmolAudio with Login Items so it launches when you sign in")
+                .onChange(of: launchAtLogin, initial: false) { _, newValue in
+                    toggleLaunchAtLogin(newValue)
+                }
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Start engine when anmolAudio launches", isOn: $startEngineOnLaunch)
-                    .toggleStyle(.switch)
-                    .help("Begin processing audio as soon as anmolAudio boots, instead of waiting for a manual start")
-                Text("When anmolAudio has audio-capture permission, the engine starts automatically on launch. Turn this off if you'd rather start it manually from the menu bar.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Toggle("Start engine when anmolAudio launches", isOn: $startEngineOnLaunch)
+                .toggleStyle(.checkbox)
+                .help("Begin processing audio as soon as anmolAudio boots, instead of waiting for a manual start")
 
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Bypass automatically during VoIP calls", isOn: $suspendDuringVoIP)
-                    .toggleStyle(.switch)
+                    .toggleStyle(.checkbox)
                     .help("Suspends anmolAudio when your microphone is active to prevent FaceTime or Zoom from ducking your audio.")
                 Text("FaceTime and Zoom aggressively lower your output volume to prevent echoes when an aggregate audio device is active. Bypassing anmolAudio when the mic is active restores hardware echo cancellation.")
                     .font(.caption)
@@ -124,7 +109,7 @@ private struct GeneralSettingsTab: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Capture apps that start after anmolAudio", isOn: $followNewAudioApps)
-                    .toggleStyle(.switch)
+                    .toggleStyle(.checkbox)
                     .help("Rebuild the audio tap when an app that launched later starts playing, so its audio goes through anmolAudio too")
                 Text("macOS fixes the list of apps an audio tap covers at the moment the tap is created, so an app you open later plays around anmolAudio until the engine restarts. With this on, anmolAudio rebuilds the tap itself — silently when nothing is playing, and with a brief fade when something is. Turn it off if you'd rather never hear that interruption.")
                     .font(.caption)
@@ -160,30 +145,8 @@ private struct GeneralSettingsTab: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Menu bar icon")
-                    Spacer()
-                    Picker("", selection: $menuBarIconStyle) {
-                        ForEach(MenuBarIconStyle.allCases) { style in
-                            Text(style.title).tag(style)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .fixedSize()
-                    .help("Choose what anmolAudio shows in the menu bar: the anmolAudio mark, a speaker glyph that mirrors your output volume, or both")
-                }
-                Text(menuBarIconStyle.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
                 Toggle("Mute briefly on output rate change", isOn: $muteOnDeviceRateChange)
-                    .toggleStyle(.switch)
+                    .toggleStyle(.checkbox)
                     .help("Fade audio out for ~150 ms when the output device's sample rate changes, to mask the resampler transient")
                 Text("Apple Music and other hi-res sources can change your DAC's sample rate between tracks. Fading briefly hides the audible pitch glitch as Core Audio's internal sample-rate converter re-tunes. Turn this off if you'd rather hear the unmasked transition.")
                     .font(.caption)
@@ -195,31 +158,12 @@ private struct GeneralSettingsTab: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Disable transparency", isOn: $disableTransparency)
-                    .toggleStyle(.switch)
+                    .toggleStyle(.checkbox)
                     .help("Use solid opaque backgrounds instead of blurred glass effects")
                 Text("Disables the translucent glass effect in the menu bar popover and editor overlays. This can reduce GPU overhead on older Macs.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Text("Updates").font(.callout.weight(.semibold))
-                    Spacer()
-                    Text("anmolAudio \(appVersion)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help("Currently installed version")
-                    Button("Check for Updates\u{2026}") { updater.checkForUpdates() }
-                        .disabled(!updater.canCheckForUpdates)
-                        .help("Manually check for a newer anmolAudio release")
-                }
-                Text("anmolAudio checks for new releases automatically. You can also check manually.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Divider()
@@ -232,10 +176,6 @@ private struct GeneralSettingsTab: View {
             // Re-sync in case the user toggled the login item from System Settings.
             launchAtLogin = SMAppService.mainApp.status == .enabled
         }
-    }
-
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
     }
 
     private func toggleLaunchAtLogin(_ on: Bool) {
@@ -271,7 +211,7 @@ private struct SyncSettingsTab: View {
                 get: { syncSettings.iCloudEnabled },
                 set: { handleToggle(newValue: $0) }
             ))
-            .toggleStyle(.switch)
+            .toggleStyle(.checkbox)
             .disabled(!iCloudAvailable)
 
             statusBlurb
@@ -288,77 +228,66 @@ private struct SyncSettingsTab: View {
                     .font(.caption.monospaced())
                     .lineLimit(2)
                     .truncationMode(.middle)
-                    .textSelection(.enabled)
+                Spacer()
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([presetStore.fileURL])
+                }
+                .font(.caption)
             }
 
-            Spacer(minLength: 0)
-        }
-        .alert(
-            "Move existing presets to iCloud?",
-            isPresented: $showMigratePrompt
-        ) {
-            Button("Move") {
-                pendingToggleValue = true
-                syncSettings.iCloudEnabled = true
-            }
-            Button("Cancel", role: .cancel) {
-                pendingToggleValue = false
-            }
-        } message: {
             Text("Your current presets.json will be copied to your iCloud Drive container so it syncs to your other Macs. anmolAudio on other devices will pick up changes automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer()
         }
-        .onAppear {
-            // Refresh in case the user signed into iCloud since launch.
-            iCloudAvailable = PresetStore.iCloudIsAvailable()
+        .confirmationDialog(
+            "Copy presets to iCloud Drive?",
+            isPresented: $showMigratePrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Keep both (copy local to iCloud)") {
+                applyICloudToggle(enabled: pendingToggleValue, migrateLocal: true)
+            }
+            Button("Use iCloud version only") {
+                applyICloudToggle(enabled: pendingToggleValue, migrateLocal: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Presets will sync between your Macs signed in with the same Apple Account. Pick whether to copy your current local presets to iCloud Drive or start fresh with what's in iCloud.")
         }
     }
 
     @ViewBuilder
     private var statusBlurb: some View {
         if !iCloudAvailable {
-            Label {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("iCloud Drive isn\u{2019}t available")
-                        .font(.callout.weight(.semibold))
-                    Text("Sign in to iCloud and enable iCloud Drive in System Settings. The build must also be signed with a developer team that has the iCloud capability.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            } icon: {
-                Image(systemName: "exclamationmark.icloud")
-                    .foregroundStyle(.orange)
-            }
-        } else if syncSettings.iCloudEnabled {
-            Label {
-                Text("Presets are synced via iCloud Drive. Changes from other Macs appear automatically.")
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: "checkmark.icloud")
-                    .foregroundStyle(.green)
-            }
-        } else {
-            Text("Presets are stored locally in Application Support. Turn on iCloud to keep them in sync across your Macs.")
+            Text("iCloud Drive isn't available on this Mac. Sign in to iCloud and turn on iCloud Drive in System Settings to sync presets between Macs.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+        } else if syncSettings.iCloudEnabled {
+            Text("Presets are syncing via iCloud Drive.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("Presets are stored locally on this Mac. Turn on to sync them between Macs via your personal iCloud Drive container.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
     private func handleToggle(newValue: Bool) {
+        pendingToggleValue = newValue
         if newValue {
-            // Only prompt if there's a local file to migrate — first launches
-            // with iCloud directly are fine without the confirmation.
-            let hasLocal = FileManager.default.fileExists(atPath: PresetStore.localFileURL.path)
-            if hasLocal && presetStore.locationKind == .local {
-                showMigratePrompt = true
-            } else {
-                syncSettings.iCloudEnabled = true
-            }
+            showMigratePrompt = true
         } else {
-            syncSettings.iCloudEnabled = false
+            applyICloudToggle(enabled: false, migrateLocal: false)
         }
+    }
+
+    private func applyICloudToggle(enabled: Bool, migrateLocal: Bool) {
+        syncSettings.iCloudEnabled = enabled
+        presetStore.setSyncEnabled(enabled, migrate: migrateLocal)
     }
 }
 
@@ -368,25 +297,25 @@ private struct BurnInSection: View {
     @ObservedObject var tracker: BurnInTracker
     @ObservedObject var deviceManager: DeviceManager
 
-    @State private var showHelp: Bool = false
+    @State private var showBurnInHelp: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
-                Text("Burn-in counter").font(.callout.weight(.semibold))
+                Text("Burn-in hours").font(.callout.weight(.semibold))
                 Button {
-                    showHelp.toggle()
+                    showBurnInHelp.toggle()
                 } label: {
                     Image(systemName: "questionmark.circle")
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("What is the burn-in counter?")
-                .popover(isPresented: $showHelp, arrowEdge: .top) {
+                .help("What is burn-in?")
+                .popover(isPresented: $showBurnInHelp, arrowEdge: .top) {
                     burnInHelp
                 }
-                Spacer()
             }
+
             let entries = tracker.entries()
             if entries.isEmpty {
                 Text("anmolAudio will tally engine runtime per output once you start it.")
@@ -395,60 +324,51 @@ private struct BurnInSection: View {
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(entries, id: \.uid) { entry in
-                        HStack(spacing: 8) {
-                            Text(displayName(for: entry))
-                                .font(.callout)
+                        HStack {
+                            Text(entry.name)
                                 .lineLimit(1)
-                                .truncationMode(.middle)
+                                .truncationMode(.tail)
                             if entry.uid == tracker.activeDeviceUID {
-                                Text("running")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(.secondary.opacity(0.15), in: Capsule())
+                                Text("active")
+                                    .font(.caption2.bold())
+                                    .foregroundStyle(.green)
                             }
                             Spacer()
-                            Text(Self.format(seconds: entry.seconds))
-                                .font(.callout.monospacedDigit())
+                            Text(formatDuration(entry.seconds))
+                                .monospacedDigit()
                                 .foregroundStyle(.secondary)
                         }
+                        .font(.caption)
                     }
                 }
+                .padding(.top, 2)
             }
         }
     }
 
+    private func formatDuration(_ seconds: Double) -> String {
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) % 3600) / 60
+        if hours == 0 && minutes == 0 {
+            return "< 1 min"
+        }
+        if hours == 0 {
+            return "\(minutes) min"
+        }
+        return "\(hours)h \(minutes)m"
+    }
+
     private var burnInHelp: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Burn-in counter").font(.headline)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Burn-in tracking").font(.headline)
             Text("How many hours of audio anmolAudio has actually played through each output device \u{2014} paused or silent time doesn\u{2019}t count. It\u{2019}s just a tally \u{2014} anmolAudio doesn\u{2019}t change anything about how it processes audio based on this number.")
                 .fixedSize(horizontal: false, vertical: true)
             Text("The name is a nod to the audiophile tradition of \u{201C}burning in\u{201D} new headphones by playing audio through them for tens or hundreds of hours, in the belief that the diaphragms loosen up and the sound improves. The evidence is contested at best; anmolAudio takes no position.")
-                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(.secondary)
         }
         .font(.callout)
         .padding(14)
         .frame(width: 320)
-    }
-
-    private func displayName(for entry: BurnInTracker.Entry) -> String {
-        // Prefer the device's current live name in case the user renamed it
-        // in Audio MIDI Setup since the last time we recorded a run.
-        if let live = deviceManager.outputDevices.first(where: { $0.uid == entry.uid }) {
-            return live.name
-        }
-        return entry.name
-    }
-
-    private static func format(seconds: Double) -> String {
-        if seconds < 60 { return "<1m" }
-        if seconds < 3600 { return "~\(Int(seconds / 60))m" }
-        let hours = seconds / 3600
-        if hours < 10 {
-            return String(format: "~%.1fh", hours)
-        }
-        return "~\(Int(hours))h"
     }
 }

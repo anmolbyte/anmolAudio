@@ -20,21 +20,7 @@ struct anmolAudioMark: View {
 }
 
 extension anmolAudioMark {
-    /// Rasterized template NSImage of the waveform mark for the menu bar.
-    @MainActor
-    static func statusBarImage(filled: Bool, pointSize: CGFloat = 18) -> NSImage {
-        let symbol = filled ? "waveform" : "waveform.slash"
-        let config = NSImage.SymbolConfiguration(pointSize: pointSize * 0.85, weight: .semibold)
-        if let sym = NSImage(systemSymbolName: symbol, accessibilityDescription: "anmolAudio")?.withSymbolConfiguration(config) {
-            sym.isTemplate = true
-            return sym
-        }
-        let fallback = NSImage(size: NSSize(width: pointSize, height: pointSize))
-        fallback.isTemplate = true
-        return fallback
-    }
-
-    /// Standalone speaker glyph mirroring the output volume.
+    /// Standalone speaker glyph mirroring the output volume. Absolutely no logo or brand mark.
     @MainActor
     static func statusBarVolumeImage(
         filled: Bool,
@@ -55,34 +41,19 @@ extension anmolAudioMark {
                 .frame(height: pointSize)
         )
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let image = renderer.nsImage ?? statusBarImage(filled: filled, pointSize: pointSize)
-        image.isTemplate = true
-        return image
+        if let image = renderer.nsImage {
+            image.isTemplate = true
+            return image
+        }
+        let config = NSImage.SymbolConfiguration(pointSize: pointSize * 0.8, weight: .regular)
+        let fallback = NSImage(systemSymbolName: isMuted ? "speaker.slash" : "speaker.wave.2", accessibilityDescription: "Volume")?.withSymbolConfiguration(config)
+            ?? NSImage(size: NSSize(width: pointSize, height: pointSize))
+        fallback.isTemplate = true
+        return fallback
     }
 
-    /// Waveform mark with the output device's volume drawn beside it.
     @MainActor
-    static func statusBarImageWithVolume(
-        filled: Bool,
-        volume: Float,
-        isMuted: Bool,
-        pointSize: CGFloat = 18
-    ) -> NSImage {
-        let symbol = isMuted ? "speaker.slash.fill" : "speaker.wave.3.fill"
-        let glyph = Image(systemName: symbol, variableValue: isMuted ? nil : Double(volume))
-            .font(.system(size: pointSize * 0.72))
-            .foregroundStyle(.black)
-        let renderer = ImageRenderer(
-            content: HStack(spacing: pointSize * 0.25) {
-                Image(systemName: filled ? "waveform" : "waveform.slash")
-                    .font(.system(size: pointSize * 0.8, weight: .semibold))
-                    .foregroundStyle(.black)
-                glyph
-            }
-        )
-        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let image = renderer.nsImage ?? statusBarImage(filled: filled, pointSize: pointSize)
-        image.isTemplate = true
-        return image
+    static func statusBarImage(filled: Bool, pointSize: CGFloat = 18) -> NSImage {
+        statusBarVolumeImage(filled: filled, volume: 1.0, isMuted: false, pointSize: pointSize)
     }
 }

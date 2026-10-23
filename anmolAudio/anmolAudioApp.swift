@@ -16,7 +16,6 @@ struct anmolAudioApp: App {
     @StateObject private var engine = EQEngine()
     @StateObject private var excludedAppsStore = ExcludedAppsStore()
     @StateObject private var devicePresetMemory = DevicePresetMemory()
-    @StateObject private var updater = UpdaterController()
     @StateObject private var burnInTracker = BurnInTracker()
     @StateObject private var outputVolumeMonitor = OutputVolumeMonitor()
     @StateObject private var voipMonitor = VoIPMonitor()
@@ -163,7 +162,6 @@ struct anmolAudioApp: App {
                 devicePresetMemory: devicePresetMemory,
                 excludedAppsStore: excludedAppsStore,
                 outputPreferences: outputPreferences,
-                updater: updater,
                 burnInTracker: burnInTracker,
                 deviceManager: deviceManager
             )
@@ -188,9 +186,6 @@ struct anmolAudioApp: App {
 
     init() {
         bootLog.info("[anmolAudio] Booted: Process Tap + vDSP biquad EQ + HAL output (no AVAudioEngine)")
-        // Must run before the MenuBarExtra label or Settings read the style,
-        // so users who had the original "show volume" Bool on keep their look.
-        MenuBarIconStyle.migrateLegacyShowVolumeSetting()
         // DeviceManager needs the user's output preferences (last-used UID,
         // follow mode) at init time so its first refresh restores the right
         // device. Construct prefs eagerly and share the same instance with
@@ -274,10 +269,6 @@ private struct MenuBarLabel: View {
 
     @Environment(\.openWindow) private var openWindow
 
-    /// What the status item shows (issue #118): the brand mark, the output
-    /// volume, or both. Defaults to the plain mark — the original look.
-    @AppStorage(MenuBarIconStyle.storageKey) private var menuBarIconStyle: MenuBarIconStyle = .logo
-
     /// `true` by default — the new flow assumes anmolAudio "just runs" once it has
     /// permission. Settings exposes a toggle for users who'd rather start it
     /// manually from the menu bar.
@@ -294,27 +285,13 @@ private struct MenuBarLabel: View {
     /// every toggle.
     @State private var didRunLaunchCoordinator: Bool = false
 
-    /// The status item per the chosen style. Volume-bearing styles need the
-    /// device to actually expose a volume; when it doesn't (HDMI, optical,
-    /// fixed line-outs) they fall back to the plain mark so the item never
-    /// goes blank.
+    /// Status item always tracks output volume with standard speaker glyphs — no logos or brand marks.
     private var statusImage: NSImage {
-        switch (menuBarIconStyle, outputVolumeMonitor.volume) {
-        case (.volume, let volume?):
-            return anmolAudioMark.statusBarVolumeImage(
-                filled: engine.isRunning,
-                volume: volume,
-                isMuted: outputVolumeMonitor.isMuted
-            )
-        case (.logoAndVolume, let volume?):
-            return anmolAudioMark.statusBarImageWithVolume(
-                filled: engine.isRunning,
-                volume: volume,
-                isMuted: outputVolumeMonitor.isMuted
-            )
-        case (.logo, _), (.volume, nil), (.logoAndVolume, nil):
-            return anmolAudioMark.statusBarImage(filled: engine.isRunning)
-        }
+        anmolAudioMark.statusBarVolumeImage(
+            filled: engine.isRunning,
+            volume: outputVolumeMonitor.volume ?? 1.0,
+            isMuted: outputVolumeMonitor.isMuted
+        )
     }
 
     var body: some View {

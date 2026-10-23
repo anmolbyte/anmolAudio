@@ -16,7 +16,7 @@ struct DevicesSettingsView: View {
             // Global display audio rule
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Ignore Display Audio (DisplayPort / HDMI)", isOn: $outputPreferences.ignoreDisplayAudio)
-                    .toggleStyle(.switch)
+                    .toggleStyle(.checkbox)
                     .onChange(of: outputPreferences.ignoreDisplayAudio) { _, _ in
                         deviceManager.refresh(initial: false)
                     }

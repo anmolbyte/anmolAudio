@@ -206,7 +206,7 @@ struct PresetLibraryView: View {
                 get: { catalog.isEnabled(entry.id) },
                 set: { on in catalog.setEnabled(entry.id, on) }
             ))
-            .toggleStyle(.switch)
+            .toggleStyle(.checkbox)
             .labelsHidden()
         }
         .padding(.vertical, 4)

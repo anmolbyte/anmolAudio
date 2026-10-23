@@ -8,10 +8,6 @@ options:
 configs:
   Debug: debug
   Release: release
-packages:
-  Sparkle:
-    url: https://github.com/sparkle-project/Sparkle
-    from: "2.6.0"
 settings:
   base:
     MARKETING_VERSION: "1.0.0"
@@ -19,7 +15,6 @@ settings:
     SWIFT_VERSION: "5.9"
     ENABLE_HARDENED_RUNTIME: YES
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
-    SPARKLE_PUBLIC_ED_KEY: ""
   configs:
     Debug:
       CODE_SIGN_STYLE: Manual
@@ -39,8 +34,6 @@ targets:
         excludes:
           - "Info.plist"
           - "anmolAudio.entitlements"
-    dependencies:
-      - package: Sparkle
     info:
       path: anmolAudio/Info.plist
       properties:
@@ -61,8 +54,6 @@ targets:
             NSUbiquitousContainerIsDocumentScopePublic: true
             NSUbiquitousContainerSupportedFolderLevels: Any
             NSUbiquitousContainerName: anmolAudio
-        SUFeedURL: "https://anmolbyte.github.io/anmolAudio/appcast.xml"
-        SUPublicEDKey: "$(SPARKLE_PUBLIC_ED_KEY)"
     entitlements:
       path: anmolAudio/anmolAudio.entitlements
       properties:

@@ -272,7 +272,7 @@ private struct AppRow: View {
                 get: { isExcluded },
                 set: { _ in onToggle() }
             ))
-            .toggleStyle(.switch)
+            .toggleStyle(.checkbox)
             .controlSize(.small)
             .labelsHidden()
             .help(isExcluded ? "Excluded \u{2014} audio bypasses anmolAudio" : "Routed through anmolAudio")

@@ -272,7 +272,7 @@ private struct AppRow: View {
                 get: { isEnabled },
                 set: { _ in onToggle() }
             ))
-            .toggleStyle(.switch)
+            .toggleStyle(.checkbox)
             .controlSize(.small)
             .labelsHidden()
             .help(isEnabled ? "Will trigger bypass" : "Ignored")
