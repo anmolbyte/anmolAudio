@@ -15,72 +15,98 @@ struct DevicesSettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            // Global display audio rule
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Ignore Display Audio (DisplayPort / HDMI)", isOn: $outputPreferences.ignoreDisplayAudio)
-                    .toggleStyle(.checkbox)
-                    .onChange(of: outputPreferences.ignoreDisplayAudio) { _, _ in
-                        deviceManager.refresh(initial: false)
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 18) {
+                    // Global display audio rule
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Ignore Display Audio (DisplayPort / HDMI)", isOn: $outputPreferences.ignoreDisplayAudio)
+                            .toggleStyle(.checkbox)
+                            .onChange(of: outputPreferences.ignoreDisplayAudio) { _, _ in
+                                deviceManager.refresh(initial: false)
+                            }
+                        Text("Monitors and TVs are automatically blocked from auto-switching and hidden from the output picker.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                Text("Monitors and TVs are automatically blocked from auto-switching and hidden from the output picker.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    // Devices list
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Audio Outputs")
+                                .font(.headline)
+                            Spacer()
+                            Text("\(outputPreferences.knownDevices.count) known")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if outputPreferences.knownDevices.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "speaker.slash")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.tertiary)
+                                Text("No devices recorded yet.")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 160)
+                        } else {
+                            // Column headers
+                            HStack(spacing: 12) {
+                                Text("Output Device")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text("Preset")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 170, alignment: .leading)
+                                Text("Behavior")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 130, alignment: .leading)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.top, 4)
+
+                            VStack(spacing: 8) {
+                                ForEach(outputPreferences.knownDevices) { record in
+                                    deviceRow(for: record)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+                .padding(20)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
 
-            // Devices list
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Audio Outputs")
-                        .font(.headline)
-                    Spacer()
-                    Text("\(outputPreferences.knownDevices.count) known")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if outputPreferences.knownDevices.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "speaker.slash")
-                            .font(.largeTitle)
-                            .foregroundStyle(.tertiary)
-                        Text("No devices recorded yet.")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 160)
-                } else {
-                    // Column headers
-                    HStack(spacing: 12) {
-                        Text("Output Device")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text("Preset")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 170, alignment: .leading)
-                        Text("Behavior")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 130, alignment: .leading)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.top, 4)
-
-                    VStack(spacing: 8) {
-                        ForEach(outputPreferences.knownDevices) { record in
-                            deviceRow(for: record)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-
-            Spacer(minLength: 0)
+            footer
         }
-        .padding(20)
+    }
+
+    private var footer: some View {
+        HStack {
+            HStack(spacing: 6) {
+                Image(systemName: "speaker.wave.2")
+                    .foregroundStyle(.secondary)
+                Text(deviceManager.selectedOutput.map { "Active: \($0.name)" } ?? "No output selected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(outputPreferences.knownDevices.count) known device\(outputPreferences.knownDevices.count == 1 ? "" : "s")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @ViewBuilder

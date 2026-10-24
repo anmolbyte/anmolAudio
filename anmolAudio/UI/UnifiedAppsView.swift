@@ -56,112 +56,138 @@ struct UnifiedAppsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Call Handling Mode section
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text("During Calls (FaceTime, Zoom)")
-                        .font(.headline)
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Call Handling Mode section
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Text("During Calls (FaceTime, Zoom)")
+                                .font(.headline)
 
-                    Button {
-                        showCallModeHelp.toggle()
-                    } label: {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Explain call handling modes")
-                    .popover(isPresented: $showCallModeHelp, arrowEdge: .bottom) {
-                        callModeHelpPopover
-                    }
+                            Button {
+                                showCallModeHelp.toggle()
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Explain call handling modes")
+                            .popover(isPresented: $showCallModeHelp, arrowEdge: .bottom) {
+                                callModeHelpPopover
+                            }
 
-                    Spacer()
-                    Picker("", selection: $outputPreferences.callHandlingMode) {
-                        ForEach(OutputSelectionPreferences.CallHandlingMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                            Spacer()
+                            Picker("", selection: $outputPreferences.callHandlingMode) {
+                                ForEach(OutputSelectionPreferences.CallHandlingMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
                         }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .fixedSize()
-                }
 
-                Text(outputPreferences.callHandlingMode.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                        Text(outputPreferences.callHandlingMode.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
+                    // App Rules table
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Application Rules")
+                                .font(.headline)
+
+                            Spacer()
+
+                            TextField("Filter apps\u{2026}", text: $filter)
+                                .textFieldStyle(.roundedBorder)
+                                .focused($filterFocused)
+                                .frame(width: 180)
+
+                            Button {
+                                addAppViaFilePicker()
+                            } label: {
+                                Label("Add App\u{2026}", systemImage: "plus")
+                            }
+                        }
+
+                        // Table Header
+                        HStack(spacing: 12) {
+                            Text("Application")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("Bypass EQ")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 80, alignment: .center)
+                                .help("This app's audio completely bypasses EQ and plays directly to macOS")
+                            Text("Call App")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 80, alignment: .center)
+                                .help("Monitored for microphone activity to trigger call audio handling")
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.top, 4)
+
+                        // List
+                        VStack(spacing: 4) {
+                            ForEach(rows) { row in
+                                AppRowView(
+                                    row: row,
+                                    isBypassed: excludedAppsStore.contains(row.bundleID),
+                                    isCallApp: voipAppsStore.contains(row.bundleID),
+                                    onToggleBypass: {
+                                        excludedAppsStore.toggle(row.bundleID)
+                                    },
+                                    onToggleCallApp: {
+                                        voipAppsStore.toggle(row.bundleID)
+                                    }
+                                )
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .padding(20)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
 
-            // App Rules table
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Application Rules")
-                        .font(.headline)
-
-                    Spacer()
-
-                    TextField("Filter apps\u{2026}", text: $filter)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($filterFocused)
-                        .frame(width: 180)
-
-                    Button {
-                        addAppViaFilePicker()
-                    } label: {
-                        Label("Add App\u{2026}", systemImage: "plus")
-                    }
-                }
-
-                // Table Header
-                HStack(spacing: 12) {
-                    Text("Application")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("Bypass EQ")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 80, alignment: .center)
-                        .help("This app's audio completely bypasses EQ and plays directly to macOS")
-                    Text("Call App")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 80, alignment: .center)
-                        .help("Monitored for microphone activity to trigger call audio handling")
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 4)
-
-                // List
-                VStack(spacing: 4) {
-                    ForEach(rows) { row in
-                        AppRowView(
-                            row: row,
-                            isBypassed: excludedAppsStore.contains(row.bundleID),
-                            isCallApp: voipAppsStore.contains(row.bundleID),
-                            onToggleBypass: {
-                                excludedAppsStore.toggle(row.bundleID)
-                            },
-                            onToggleCallApp: {
-                                voipAppsStore.toggle(row.bundleID)
-                            }
-                        )
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            Spacer(minLength: 0)
+            footer
         }
-        .padding(20)
         .task {
             refreshRunningApps()
             processListListener = AudioProcessListChangeListener { [self] in
                 Task { @MainActor in self.refreshRunningApps() }
             }
         }
+    }
+
+    private var footer: some View {
+        HStack {
+            HStack(spacing: 6) {
+                Image(systemName: "phone.bubble.left")
+                    .foregroundStyle(.secondary)
+                Text("Calls: \(outputPreferences.callHandlingMode.title)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(rows.count) app\(rows.count == 1 ? "" : "s") detected • \(excludedAppsStore.excludedBundleIDs.count) bypassed")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var callModeHelpPopover: some View {

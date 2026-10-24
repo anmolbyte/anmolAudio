@@ -68,7 +68,7 @@ final class EQEngine: ObservableObject {
     private var bypassHotkey: BypassHotkey?
 
     /// Tap's current native rate. Updates on every soft reconfig.
-    private var activeSampleRate: Double?
+    @Published private(set) var activeSampleRate: Double?
     /// HAL Output's pinned client-format rate for the current run. Set once
     /// in `fullStart` (from the output device's nominal rate at that moment)
     /// and held until the engine stops or the user picks a different output
