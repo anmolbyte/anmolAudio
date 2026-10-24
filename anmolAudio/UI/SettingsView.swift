@@ -47,9 +47,25 @@ struct SettingsView: View {
             SyncSettingsTab(syncSettings: syncSettings, presetStore: presetStore)
             .tabItem { Label("Sync", systemImage: "icloud") }
         }
-        .frame(minWidth: 640, idealWidth: 660, maxWidth: .infinity, minHeight: 460, idealHeight: 540, maxHeight: .infinity)
+        .frame(
+            minWidth: 640,
+            idealWidth: 660,
+            maxWidth: .infinity,
+            minHeight: 460,
+            idealHeight: defaultWindowHeight,
+            maxHeight: screenMaxHeight
+        )
         .background(disableTransparency ? Color(nsColor: .windowBackgroundColor) : Color.clear)
         .showsInDockWhileVisible()
+    }
+
+    private var screenMaxHeight: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - 40
+    }
+
+    private var defaultWindowHeight: CGFloat {
+        // Fits General tab cleanly with no scrollbar, while clamping on small screens
+        min(675, max(460, screenMaxHeight))
     }
 }
 
@@ -72,7 +88,7 @@ private struct GeneralSettingsTab: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 15) {
                     Toggle("Start at login", isOn: $launchAtLogin)
                         .toggleStyle(.checkbox)
                         .help("Register anmolAudio with Login Items so it launches when you sign in")

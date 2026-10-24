@@ -45,21 +45,27 @@ final class DeviceManager: ObservableObject {
 
     func refresh(initial: Bool) {
         let all = CoreAudioDevices.all()
-        for device in all where device.hasOutput {
-            preferences.recordSeen(device: device)
-        }
         // anmolAudio's own private aggregate (created in ProcessTapInput) is
         // visible to its creating process even with isPrivate=true. Hide it
         // from the picker — selecting it as the output would loop the tap
         // back through itself. Also filter out ignored devices (like displays).
         let outs = all
             .filter(\.hasOutput)
-            .filter { !$0.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") && !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") }
+            .filter {
+                !$0.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+                !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+                !$0.name.contains("System Tap")
+            }
             .filter { device in
                 let policy = preferences.effectivePolicy(for: device)
                 return policy != .ignored || device.uid == selectedOutput?.uid
             }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+
+        // Only record genuine physical/visible output devices, never private aggregates
+        for device in outs {
+            preferences.recordSeen(device: device)
+        }
 
         // Snapshot the previous visible set before overwriting it — used both
         // for the material-change gate and to spot devices that just appeared.

@@ -167,7 +167,7 @@ struct anmolAudioApp: App {
                 engine: engine
             )
         }
-        .defaultSize(width: 660, height: 540)
+        .defaultSize(width: 660, height: 675)
         .windowResizability(.contentMinSize)
         .commandsRemoved()
     }

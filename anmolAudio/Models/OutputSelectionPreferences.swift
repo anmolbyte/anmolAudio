@@ -112,6 +112,12 @@ final class OutputSelectionPreferences: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        purgePrivateAggregateRecords()
+    }
+
+    private func purgePrivateAggregateRecords() {
+        let current = knownDevices
+        self.knownDevices = current
     }
 
     var lastOutputUID: String? {
@@ -185,10 +191,21 @@ final class OutputSelectionPreferences: ObservableObject {
                   let decoded = try? JSONDecoder().decode([KnownDeviceRecord].self, from: data) else {
                 return []
             }
-            return decoded.sorted { $0.lastSeen > $1.lastSeen }
+            return decoded
+                .filter { record in
+                    !record.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+                    !record.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+                    !record.name.contains("System Tap")
+                }
+                .sorted { $0.lastSeen > $1.lastSeen }
         }
         set {
-            if let encoded = try? JSONEncoder().encode(newValue) {
+            let clean = newValue.filter { record in
+                !record.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+                !record.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+                !record.name.contains("System Tap")
+            }
+            if let encoded = try? JSONEncoder().encode(clean) {
                 defaults.set(encoded, forKey: Self.knownDevicesKey)
                 objectWillChange.send()
             }
@@ -196,6 +213,11 @@ final class OutputSelectionPreferences: ObservableObject {
     }
 
     func recordSeen(device: AudioDevice) {
+        guard !device.uid.hasPrefix("app.anmol.anmolAudio.aggregate."),
+              !device.uid.hasPrefix("app.lurar.Lurar.aggregate."),
+              !device.name.contains("System Tap") else {
+            return
+        }
         var list = knownDevices
         if let idx = list.firstIndex(where: { $0.uid == device.uid }) {
             list[idx].name = device.name
@@ -219,6 +241,12 @@ final class OutputSelectionPreferences: ObservableObject {
                 policy: initialPolicy
             ))
         }
+        self.knownDevices = list
+    }
+
+    func forgetDevice(uid: String) {
+        var list = knownDevices
+        list.removeAll { $0.uid == uid }
         self.knownDevices = list
     }
 

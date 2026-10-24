@@ -126,6 +126,7 @@ struct DevicesSettingsView: View {
                     Text(record.name)
                         .font(.body.weight(.medium))
                         .lineLimit(1)
+                        .help(record.name)
 
                     if isCurrentlySelected {
                         Text("Active")
@@ -168,9 +169,14 @@ struct DevicesSettingsView: View {
                 width: 170,
                 selection: Binding(
                     get: {
-                        devicePresetMemory.lastPresetID(for: record.uid)?.uuidString
-                            ?? visiblePresetsList.first?.id.uuidString
-                            ?? ""
+                        if let last = devicePresetMemory.lastPresetID(for: record.uid),
+                           visiblePresetsList.contains(where: { $0.id == last }) {
+                            return last.uuidString
+                        }
+                        if let flat = visiblePresetsList.first(where: { $0.id == EQPreset.flatID }) {
+                            return flat.id.uuidString
+                        }
+                        return visiblePresetsList.first?.id.uuidString ?? ""
                     },
                     set: { newUUID in
                         if let id = UUID(uuidString: newUUID) {
@@ -211,11 +217,32 @@ struct DevicesSettingsView: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .frame(width: 130)
+
+            if !isCurrentlySelected && !isConnected {
+                Button {
+                    outputPreferences.forgetDevice(uid: record.uid)
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Forget \(record.name)")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .contextMenu {
+            if !isCurrentlySelected {
+                Button(role: .destructive) {
+                    outputPreferences.forgetDevice(uid: record.uid)
+                } label: {
+                    Label("Forget Device", systemImage: "trash")
+                }
+            }
+        }
     }
 
     private func addNewPreset(for record: OutputSelectionPreferences.KnownDeviceRecord) {
