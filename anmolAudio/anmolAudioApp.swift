@@ -223,6 +223,8 @@ struct anmolAudioApp: App {
 /// destination.
 @MainActor
 final class anmolAudioAppDelegate: NSObject, NSApplicationDelegate {
+    static weak var shared: anmolAudioAppDelegate?
+
     /// Set by `MenuBarLabel.task` once the persistent engine `@StateObject`
     /// is bound. Weak because the engine is owned by the SwiftUI app, not us.
     weak var engine: EQEngine?
@@ -230,6 +232,7 @@ final class anmolAudioAppDelegate: NSObject, NSApplicationDelegate {
     nonisolated override init() {
         super.init()
         MainActor.assumeIsolated {
+            Self.shared = self
             launchLog.info("anmolAudioAppDelegate: created (NSApp.delegate adaptor instantiated)")
         }
     }
@@ -308,8 +311,11 @@ private struct MenuBarLabel: View {
                 // Seed the persistent engine with output preferences and excluded apps
                 engine.outputPreferences = outputPreferences
                 engine.excludedAppsStore = excludedAppsStore
-                excludedAppsStore.onChange = { [weak engine] in
-                    engine?.reEnumerateTapTargets()
+                excludedAppsStore.onChange = { [weak e = engine] in
+                    e?.reEnumerateTapTargets()
+                }
+                VoIPAppsStore.shared.onChange = { [weak e = engine] in
+                    e?.reEnumerateTapTargets()
                 }
 
                 // Wire up onTopologyChange at launch so hardware changes (plug/unplug)
@@ -329,7 +335,7 @@ private struct MenuBarLabel: View {
                 // engine `@StateObject`'s wrappedValue isn't guaranteed to
                 // be the persistent instance during App init — see the note
                 // in `anmolAudioApp.init()`.
-                if let delegate = NSApp.delegate as? anmolAudioAppDelegate {
+                if let delegate = (NSApp.delegate as? anmolAudioAppDelegate) ?? anmolAudioAppDelegate.shared {
                     delegate.engine = engine
                     launchLog.info("App delegate engine reference wired")
                 } else {
@@ -371,6 +377,9 @@ private struct MenuBarLabel: View {
                 } else if newOut == nil, engine.isRunning {
                     engine.stop()
                 }
+            }
+            .onChange(of: outputPreferences.callHandlingMode) { _, _ in
+                engine.reEnumerateTapTargets()
             }
     }
 

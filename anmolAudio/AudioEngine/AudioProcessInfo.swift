@@ -2,6 +2,7 @@ import Foundation
 import CoreAudio
 import AppKit
 import OSLog
+import Darwin
 
 private let log = Logger(subsystem: "app.anmol.anmolAudio", category: "AudioProcessInfo")
 
@@ -36,9 +37,38 @@ enum AudioProcessInfo {
         var cfRef: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let status = AudioObjectGetPropertyData(processObject, &addr, 0, nil, &size, &cfRef)
-        guard status == noErr, let cf = cfRef?.takeRetainedValue() else { return nil }
-        let value = cf as String
-        return value.isEmpty ? nil : value
+        if status == noErr, let cf = cfRef?.takeRetainedValue() {
+            let value = cf as String
+            if !value.isEmpty {
+                return value
+            }
+        }
+
+        // Fallback: daemons and system call helpers may not vend a CFBundleIdentifier via CoreAudio.
+        // Resolve using NSRunningApplication or proc_pidpath to guarantee call daemons like
+        // avconferenced or FaceTime are properly recognized and excluded.
+        if let processPid = pid(for: processObject) {
+            if let runningApp = NSRunningApplication(processIdentifier: processPid),
+               let bid = runningApp.bundleIdentifier, !bid.isEmpty {
+                return bid
+            }
+            var buffer = [CChar](repeating: 0, count: 4096)
+            let length = proc_pidpath(processPid, &buffer, UInt32(buffer.count))
+            if length > 0 {
+                let path = String(cString: buffer)
+                let name = (path as NSString).lastPathComponent
+                if name == "avconferenced" {
+                    return "com.apple.avconferenced"
+                } else if name == "FaceTime" {
+                    return "com.apple.FaceTime"
+                } else if name == "callservicesd" {
+                    return "com.apple.telephonyutilities.callservicesd"
+                } else if name == "TelephonyUtilities" {
+                    return "com.apple.TelephonyUtilities"
+                }
+            }
+        }
+        return nil
     }
 
     /// True while the process has an IO proc running output — it is playing

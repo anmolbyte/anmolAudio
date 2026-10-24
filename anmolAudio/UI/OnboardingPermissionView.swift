@@ -118,6 +118,7 @@ struct OnboardingPermissionView: View {
             case .denied:
                 mode = .denied
             case .authorized:
+                ensureDefaultOutputSelected()
                 mode = .setup
                 ensureEngineRunning()
                 triggerAutoApplyIfNeeded()
@@ -514,12 +515,10 @@ struct OnboardingPermissionView: View {
         case .initial:
             HStack {
                 Spacer()
-                Button("Not now") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .help("Close this window without granting permission (esc)")
                 Button("Continue") {
                     continueFromInitial()
                 }
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .help("Show the macOS audio-capture permission prompt (\u{21A9})")
             }
@@ -583,6 +582,7 @@ struct OnboardingPermissionView: View {
         Task { @MainActor in
             let authorized = await AudioCapturePermission.ensureAuthorizedAsync()
             if authorized {
+                ensureDefaultOutputSelected()
                 ensureEngineRunning()
                 mode = .setup
                 triggerAutoApplyIfNeeded()
@@ -602,11 +602,22 @@ struct OnboardingPermissionView: View {
         Task { @MainActor in
             let authorized = await AudioCapturePermission.ensureAuthorizedAsync()
             if authorized {
+                ensureDefaultOutputSelected()
                 ensureEngineRunning()
                 mode = .setup
                 triggerAutoApplyIfNeeded()
             } else {
                 retryFailed = true
+            }
+        }
+    }
+
+    /// Selects the current system default output device if available.
+    private func ensureDefaultOutputSelected() {
+        if let def = CoreAudioDevices.defaultOutput(),
+           let matching = deviceManager.outputDevices.first(where: { $0.id == def.id || $0.uid == def.uid }) {
+            if deviceManager.selectedOutput?.uid != matching.uid {
+                deviceManager.selectedOutput = matching
             }
         }
     }
@@ -625,10 +636,11 @@ struct OnboardingPermissionView: View {
     private func selectOutput(_ device: AudioDevice) {
         guard deviceManager.selectedOutput?.uid != device.uid else { return }
         deviceManager.selectedOutput = device
-        // Restart the engine on the new device so the user immediately hears
-        // EQ via the chosen output. EQEngine.start handles the running-engine
-        // case (rebinds rather than tearing the whole pipeline down).
-        engine.start(output: device)
+        // If the engine isn't running yet, start it now. If it is already running,
+        // MenuBarLabel's onChange(of: selectedOutput) rebinds the running engine.
+        if !engine.isRunning {
+            engine.start(output: device)
+        }
     }
 
     /// Soft auto-apply: when the user lands on (or swaps to) an output that

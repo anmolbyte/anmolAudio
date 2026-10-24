@@ -8,6 +8,7 @@ final class VoIPAppsStore: ObservableObject {
     private static let legacyDefaultsKey = "lurar.voipBundleIDs"
 
     @Published private(set) var voipBundleIDs: Set<String>
+    var onChange: (() -> Void)?
 
     static let shared = VoIPAppsStore() // singleton for VoIPMonitor
 
@@ -18,14 +19,17 @@ final class VoIPAppsStore: ObservableObject {
                 "com.apple.FaceTime",
                 "com.apple.avconferenced",
                 "com.apple.TelephonyUtilities",
+                "com.apple.telephonyutilities.callservicesd",
                 "us.zoom.xos",
                 "com.microsoft.teams",
                 "com.microsoft.teams2"
             ]
         var set = Set(raw)
-        // Always ensure system call daemons are recognized
+        // Always ensure system call daemons and FaceTime are recognized
+        set.insert("com.apple.FaceTime")
         set.insert("com.apple.avconferenced")
         set.insert("com.apple.TelephonyUtilities")
+        set.insert("com.apple.telephonyutilities.callservicesd")
         self.voipBundleIDs = set
     }
 
@@ -44,6 +48,7 @@ final class VoIPAppsStore: ObservableObject {
             voipBundleIDs.remove(trimmed)
         }
         persist()
+        onChange?()
     }
 
     func toggle(_ bundleID: String) {

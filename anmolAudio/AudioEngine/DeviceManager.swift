@@ -25,6 +25,7 @@ final class DeviceManager: ObservableObject {
     private var topologyListener: DeviceChangeListener?
     private var defaultOutputListener: DefaultOutputDeviceListener?
     private var pendingSyncDeviceID: AudioObjectID?
+    private var pendingSyncTimestamp: Date = .distantPast
     /// UID snapshot of the last visible device list — used to decide
     /// whether a topology notification actually changed anything the user
     /// cares about, or whether it was just our private tap aggregate
@@ -64,7 +65,7 @@ final class DeviceManager: ObservableObject {
         // for the material-change gate and to spot devices that just appeared.
         let previousUIDs = lastVisibleUIDs
         let newUIDs = outs.map(\.uid)
-        let addedUIDs = Set(newUIDs).subtracting(previousUIDs)
+        let addedUIDs = previousUIDs.isEmpty ? [] : Set(newUIDs).subtracting(previousUIDs)
 
         self.outputDevices = outs
 
@@ -89,7 +90,13 @@ final class DeviceManager: ObservableObject {
             let systemDefault = CoreAudioDevices.defaultOutput()
                 .flatMap { def in outs.first { $0.id == def.id && preferences.effectivePolicy(for: $0) == .auto } }
             let firstValid = outs.first(where: { preferences.effectivePolicy(for: $0) != .ignored })
-            selectedOutput = remembered ?? systemDefault ?? firstValid ?? outs.first
+            let preferred: AudioDevice?
+            if preferences.followsSystemDefault {
+                preferred = systemDefault ?? remembered ?? firstValid ?? outs.first
+            } else {
+                preferred = remembered ?? systemDefault ?? firstValid ?? outs.first
+            }
+            selectedOutput = preferred
         }
 
         // Only nudge the engine if the visible device list materially
@@ -110,6 +117,7 @@ final class DeviceManager: ObservableObject {
     private func syncSystemDefaultIfNeeded(to output: AudioDevice) {
         guard let currentDefault = CoreAudioDevices.defaultOutput(), currentDefault.id != output.id else { return }
         pendingSyncDeviceID = output.id
+        pendingSyncTimestamp = Date()
         do {
             try CoreAudioDevices.setDefaultOutput(id: output.id)
             log.info("Synced macOS default output to \(output.name, privacy: .public)")
@@ -129,8 +137,12 @@ final class DeviceManager: ObservableObject {
                 pendingSyncDeviceID = nil
                 log.info("Ignoring echo of our own default output sync to \(newDefault.name, privacy: .public)")
                 return
+            } else if Date().timeIntervalSince(pendingSyncTimestamp) < 1.5 {
+                log.info("Ignoring intermediate system default \(newDefault.name, privacy: .public) while waiting for sync to target device ID \(pending)")
+                return
+            } else {
+                pendingSyncDeviceID = nil
             }
-            pendingSyncDeviceID = nil
         }
         // CoreAudio fires the default-change and device-list notifications
         // independently — if a brand-new device (AirPods) just became default
