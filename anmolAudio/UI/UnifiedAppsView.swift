@@ -10,6 +10,7 @@ struct UnifiedAppsView: View {
     @State private var runningApps: [AudioProcessInfo.App] = []
     @State private var processListListener: AudioProcessListChangeListener?
     @State private var filter: String = ""
+    @State private var showCallModeHelp: Bool = false
     @FocusState private var filterFocused: Bool
 
     fileprivate struct Row: Identifiable, Hashable {
@@ -58,9 +59,22 @@ struct UnifiedAppsView: View {
         VStack(alignment: .leading, spacing: 16) {
             // Call Handling Mode section
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
+                HStack(spacing: 6) {
                     Text("During Calls (FaceTime, Zoom)")
                         .font(.headline)
+
+                    Button {
+                        showCallModeHelp.toggle()
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Explain call handling modes")
+                    .popover(isPresented: $showCallModeHelp, arrowEdge: .bottom) {
+                        callModeHelpPopover
+                    }
+
                     Spacer()
                     Picker("", selection: $outputPreferences.callHandlingMode) {
                         ForEach(OutputSelectionPreferences.CallHandlingMode.allCases) { mode in
@@ -141,6 +155,8 @@ struct UnifiedAppsView: View {
                 }
                 .frame(maxHeight: 340)
             }
+
+            Spacer(minLength: 0)
         }
         .padding(20)
         .task {
@@ -149,6 +165,45 @@ struct UnifiedAppsView: View {
                 Task { @MainActor in self.refreshRunningApps() }
             }
         }
+    }
+
+    private var callModeHelpPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Call Handling Modes")
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bypass call audio (Recommended)")
+                        .font(.subheadline.bold())
+                    Text("Routes communication apps (FaceTime, Zoom, Teams, Slack) directly to hardware, preserving Apple's native hardware echo cancellation, noise isolation, and volume. Any background music or system sounds keep your full EQ curves.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Flatten EQ & keep Preamp")
+                        .font(.subheadline.bold())
+                    Text("Keeps all audio routed through anmolAudio, but temporarily disables frequency boosts/cuts during calls so voice audio sounds natural and doesn't trigger feedback. Retains the preamp level of your active preset.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Pause during calls")
+                        .font(.subheadline.bold())
+                    Text("Completely bypasses and suspends anmolAudio processing whenever your microphone is in use. All audio plays unprocessed until you hang up.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
     }
 
     private func refreshRunningApps() {

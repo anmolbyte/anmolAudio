@@ -163,7 +163,8 @@ struct anmolAudioApp: App {
                 excludedAppsStore: excludedAppsStore,
                 outputPreferences: outputPreferences,
                 burnInTracker: burnInTracker,
-                deviceManager: deviceManager
+                deviceManager: deviceManager,
+                engine: engine
             )
         }
         .windowResizability(.contentSize)
@@ -186,6 +187,7 @@ struct anmolAudioApp: App {
 
     init() {
         bootLog.info("[anmolAudio] Booted: Process Tap + vDSP biquad EQ + HAL output (no AVAudioEngine)")
+        LurarMigration.migrateUserDefaultsIfNeeded()
         // DeviceManager needs the user's output preferences (last-used UID,
         // follow mode) at init time so its first refresh restores the right
         // device. Construct prefs eagerly and share the same instance with

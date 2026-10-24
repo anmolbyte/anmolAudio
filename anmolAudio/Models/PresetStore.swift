@@ -354,10 +354,46 @@ final class PresetStore: ObservableObject {
         log.info("Switched preset store location to \(kind.rawValue): \(self.fileURL.path)")
     }
 
-    // MARK: - Bundle seed
+    // MARK: - Bundle / Legacy seed
+
+    private static let legacyLocalFileURL = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Lurar", isDirectory: true)
+        .appendingPathComponent("presets.json")
+
+    private static var legacyICloudFileURL: URL? {
+        FileManager.default
+            .url(forUbiquityContainerIdentifier: "iCloud.app.lurar.Lurar")?
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("presets.json")
+    }
 
     private func seedIfNeeded() {
         guard !FileManager.default.fileExists(atPath: fileURL.path) else { return }
+
+        // 1. Try legacy Lurar iCloud presets
+        if let legacyICloud = Self.legacyICloudFileURL, FileManager.default.fileExists(atPath: legacyICloud.path) {
+            do {
+                try FileManager.default.copyItem(at: legacyICloud, to: fileURL)
+                log.info("Migrated presets.json from legacy Lurar iCloud to \(self.fileURL.path)")
+                return
+            } catch {
+                log.error("Failed to copy legacy Lurar iCloud presets: \(String(describing: error))")
+            }
+        }
+
+        // 2. Try legacy Lurar local presets
+        if FileManager.default.fileExists(atPath: Self.legacyLocalFileURL.path) {
+            do {
+                try FileManager.default.copyItem(at: Self.legacyLocalFileURL, to: fileURL)
+                log.info("Migrated presets.json from legacy Lurar local storage to \(self.fileURL.path)")
+                return
+            } catch {
+                log.error("Failed to copy legacy Lurar local presets: \(String(describing: error))")
+            }
+        }
+
+        // 3. Fallback to bundled presets
         if let bundled = Bundle.main.url(forResource: "presets", withExtension: "json") {
             do {
                 try FileManager.default.copyItem(at: bundled, to: fileURL)

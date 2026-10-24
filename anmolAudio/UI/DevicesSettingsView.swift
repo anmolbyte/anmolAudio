@@ -6,6 +6,9 @@ struct DevicesSettingsView: View {
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var presetStore: PresetStore
     @ObservedObject var presetCatalog: PresetCatalog
+    @ObservedObject var engine: EQEngine
+
+    @Environment(\.openWindow) private var openWindow
 
     private var visiblePresetsList: [EQPreset] {
         anmolAudio.visiblePresets(catalog: presetCatalog, store: presetStore)
@@ -28,7 +31,7 @@ struct DevicesSettingsView: View {
             Divider()
 
             // Devices list
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Audio Outputs")
                         .font(.headline)
@@ -48,6 +51,24 @@ struct DevicesSettingsView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 160)
                 } else {
+                    // Column headers
+                    HStack(spacing: 12) {
+                        Text("Output Device")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("Preset")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+                        Text("Behavior")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 130, alignment: .leading)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.top, 4)
+
                     ScrollView {
                         VStack(spacing: 8) {
                             ForEach(outputPreferences.knownDevices) { record in
@@ -59,6 +80,8 @@ struct DevicesSettingsView: View {
                     .frame(maxHeight: 340)
                 }
             }
+
+            Spacer(minLength: 0)
         }
         .padding(20)
     }
@@ -115,48 +138,72 @@ struct DevicesSettingsView: View {
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            // Paired EQ Preset Picker
-            VStack(alignment: .trailing, spacing: 2) {
-                Picker("Preset", selection: Binding(
+            // Paired EQ Preset Dropdown with "Add preset…" action
+            FixedWidthPopUp(
+                width: 170,
+                selection: Binding(
                     get: {
-                        devicePresetMemory.lastPresetID(for: record.uid) ?? visiblePresetsList.first?.id
+                        devicePresetMemory.lastPresetID(for: record.uid)?.uuidString
+                            ?? visiblePresetsList.first?.id.uuidString
+                            ?? ""
                     },
-                    set: { newID in
-                        if let newID {
-                            devicePresetMemory.setLastPresetID(newID, for: record.uid)
+                    set: { newUUID in
+                        if let id = UUID(uuidString: newUUID) {
+                            devicePresetMemory.setLastPresetID(id, for: record.uid)
+                            if isCurrentlySelected, let preset = visiblePresetsList.first(where: { $0.id == id }) {
+                                engine.apply(preset: preset)
+                            }
                         }
                     }
-                )) {
-                    ForEach(visiblePresetsList) { preset in
-                        Text(preset.name).tag(Optional(preset.id))
+                ),
+                items: anmolAudio.sortedPresetItems(
+                    presets: visiblePresetsList,
+                    catalog: presetCatalog,
+                    store: presetStore
+                ),
+                actions: [
+                    .init(id: "new", title: "Add preset\u{2026}")
+                ],
+                onAction: { actionID in
+                    if actionID == "new" {
+                        addNewPreset(for: record)
                     }
                 }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-            }
+            )
 
             // Auto-switch Policy Picker
-            VStack(alignment: .trailing, spacing: 2) {
-                Picker("Behavior", selection: Binding(
-                    get: { effectivePolicy },
-                    set: { newPolicy in
-                        outputPreferences.setPolicy(newPolicy, for: record.uid)
-                        deviceManager.refresh(initial: false)
-                    }
-                )) {
-                    ForEach(OutputSelectionPreferences.DevicePolicy.allCases) { policy in
-                        Text(policy.title).tag(policy)
-                    }
+            Picker("", selection: Binding(
+                get: { effectivePolicy },
+                set: { newPolicy in
+                    outputPreferences.setPolicy(newPolicy, for: record.uid)
+                    deviceManager.refresh(initial: false)
                 }
-                .pickerStyle(.menu)
-                .frame(width: 120)
+            )) {
+                ForEach(OutputSelectionPreferences.DevicePolicy.allCases) { policy in
+                    Text(policy.title).tag(policy)
+                }
             }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 130)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func addNewPreset(for record: OutputSelectionPreferences.KnownDeviceRecord) {
+        let presetName = presetStore.uniqueName(based: "\(record.name) EQ")
+        let preset = EQPreset.blank(name: presetName)
+        presetStore.add(preset)
+        devicePresetMemory.setLastPresetID(preset.id, for: record.uid)
+        if deviceManager.selectedOutput?.uid == record.uid {
+            engine.apply(preset: preset)
+        }
+        openWindow(id: "editor")
+        NSApp.activate(ignoringOtherApps: true)
     }
 }

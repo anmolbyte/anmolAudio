@@ -13,6 +13,9 @@ struct SettingsView: View {
     @ObservedObject var outputPreferences: OutputSelectionPreferences
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var deviceManager: DeviceManager
+    @ObservedObject var engine: EQEngine
+
+    @AppStorage("disableTransparency") private var disableTransparency: Bool = false
 
     var body: some View {
         TabView {
@@ -23,22 +26,18 @@ struct SettingsView: View {
             )
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .padding(20)
-                .frame(width: 540)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             DevicesSettingsView(
                 outputPreferences: outputPreferences,
                 deviceManager: deviceManager,
                 devicePresetMemory: devicePresetMemory,
                 presetStore: presetStore,
-                presetCatalog: presetCatalog
+                presetCatalog: presetCatalog,
+                engine: engine
             )
                 .tabItem { Label("Devices", systemImage: "headphones") }
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: 460,
-                    idealHeight: 460,
-                    maxHeight: .infinity
-                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             UnifiedAppsView(
                 outputPreferences: outputPreferences,
@@ -46,19 +45,15 @@ struct SettingsView: View {
                 voipAppsStore: VoIPAppsStore.shared
             )
                 .tabItem { Label("Apps", systemImage: "square.stack.3d.up") }
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: 460,
-                    idealHeight: 460,
-                    maxHeight: .infinity
-                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
             SyncSettingsTab(syncSettings: syncSettings, presetStore: presetStore)
                 .tabItem { Label("Sync", systemImage: "icloud") }
                 .padding(20)
-                .frame(width: 540)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(width: 600)
+        .frame(width: 640)
+        .background(disableTransparency ? Color(nsColor: .windowBackgroundColor) : Color.clear)
         .showsInDockWhileVisible()
     }
 }
@@ -160,7 +155,7 @@ private struct GeneralSettingsTab: View {
                 Toggle("Disable transparency", isOn: $disableTransparency)
                     .toggleStyle(.checkbox)
                     .help("Use solid opaque backgrounds instead of blurred glass effects")
-                Text("Disables the translucent glass effect in the menu bar popover and editor overlays. This can reduce GPU overhead on older Macs.")
+                Text("Uses solid opaque backgrounds instead of translucent blur in the menu bar popover and editor overlays. Reduces GPU load and improves contrast.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
