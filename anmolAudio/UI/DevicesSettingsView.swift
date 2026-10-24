@@ -69,15 +69,12 @@ struct DevicesSettingsView: View {
                     .padding(.horizontal, 14)
                     .padding(.top, 4)
 
-                    ScrollView {
-                        VStack(spacing: 8) {
-                            ForEach(outputPreferences.knownDevices) { record in
-                                deviceRow(for: record)
-                            }
+                    VStack(spacing: 8) {
+                        ForEach(outputPreferences.knownDevices) { record in
+                            deviceRow(for: record)
                         }
-                        .padding(.vertical, 4)
                     }
-                    .frame(maxHeight: 340)
+                    .padding(.vertical, 4)
                 }
             }
 

@@ -135,25 +135,22 @@ struct UnifiedAppsView: View {
                 .padding(.top, 4)
 
                 // List
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(rows) { row in
-                            AppRowView(
-                                row: row,
-                                isBypassed: excludedAppsStore.contains(row.bundleID),
-                                isCallApp: voipAppsStore.contains(row.bundleID),
-                                onToggleBypass: {
-                                    excludedAppsStore.toggle(row.bundleID)
-                                },
-                                onToggleCallApp: {
-                                    voipAppsStore.toggle(row.bundleID)
-                                }
-                            )
-                        }
+                VStack(spacing: 4) {
+                    ForEach(rows) { row in
+                        AppRowView(
+                            row: row,
+                            isBypassed: excludedAppsStore.contains(row.bundleID),
+                            isCallApp: voipAppsStore.contains(row.bundleID),
+                            onToggleBypass: {
+                                excludedAppsStore.toggle(row.bundleID)
+                            },
+                            onToggleCallApp: {
+                                voipAppsStore.toggle(row.bundleID)
+                            }
+                        )
                     }
-                    .padding(.vertical, 4)
                 }
-                .frame(maxHeight: 340)
+                .padding(.vertical, 4)
             }
 
             Spacer(minLength: 0)

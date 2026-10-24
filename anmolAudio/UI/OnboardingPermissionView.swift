@@ -105,10 +105,7 @@ struct OnboardingPermissionView: View {
             }
             .padding(28)
         }
-        .frame(
-            width: mode == .denied ? 480 : 580,
-            height: mode == .denied ? nil : 540
-        )
+        .frame(width: mode == .denied ? 480 : 580)
         // Bring anmolAudio into the dock + Cmd+Tab while the onboarding window
         // is open — without it the user can't switch back after bouncing
         // to System Settings to grant the TCC permission.
