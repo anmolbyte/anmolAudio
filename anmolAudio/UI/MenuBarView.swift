@@ -490,42 +490,41 @@ struct MenuBarView: View {
                         let volume = appVolumeStore.volume(for: app.bundleID)
                         let isMuted = appVolumeStore.isMuted(for: app.bundleID)
 
-                        HStack(spacing: 8) {
-                            Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSImage())
-                                .resizable()
-                                .frame(width: 16, height: 16)
-
-                            HStack(spacing: 5) {
-                                Text(app.displayName)
-                                    .font(.callout)
-                                    .lineLimit(1)
+                        HStack(spacing: 10) {
+                            // App Icon with live playing badge and tooltip
+                            ZStack(alignment: .bottomTrailing) {
+                                Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSImage())
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 22, height: 22)
 
                                 if app.isPlaying {
                                     Circle()
                                         .fill(Color.green)
-                                        .frame(width: 6, height: 6)
-                                        .help("Playing audio")
+                                        .frame(width: 7, height: 7)
+                                        .overlay(Circle().stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1.5))
+                                        .offset(x: 2, y: 2)
                                 }
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(app.displayName)
 
                             Button {
                                 appVolumeStore.toggleMute(for: app.bundleID)
                             } label: {
                                 Image(systemName: isMuted ? "speaker.slash.fill" : (volume == 0 ? "speaker.fill" : "speaker.wave.2.fill"))
                                     .foregroundStyle(isMuted ? .red : (isBypassed ? .secondary : .primary))
-                                    .frame(width: 16)
+                                    .frame(width: 18)
                             }
                             .buttonStyle(.plain)
                             .disabled(isBypassed)
-                            .help(isMuted ? "Unmute app" : "Mute app")
+                            .help(isMuted ? "Unmute \(app.displayName)" : "Mute \(app.displayName)")
 
                             Slider(value: Binding(
                                 get: { Double(volume) },
                                 set: { appVolumeStore.setVolume(Float($0), for: app.bundleID) }
                             ), in: 0...1)
-                            .frame(width: 80)
                             .disabled(isBypassed)
+                            .help("\(app.displayName): \(Int(round(volume * 100)))%")
 
                             Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
                                 .font(.caption2.monospacedDigit())
