@@ -41,17 +41,17 @@ struct EarTrumpetSlider: View {
                     .frame(width: 1.5, height: 7)
                     .position(x: notchX, y: height / 2)
 
-                // 3. Volume Track Range Fill (from 0 to thumb)
+                // 3. Volume Track Range Fill (from 0 to thumb) in native macOS neutral gray
                 if fillWidth > 0 && !isMuted {
                     if currentVolume <= 1.0 {
                         Capsule()
-                            .fill(Color.accentColor.opacity(0.30))
+                            .fill(Color.primary.opacity(0.25))
                             .frame(width: fillWidth, height: 4)
                     } else {
-                        // Segmented: Blue up to 100%, Orange for boost portion
+                        // Segmented: Neutral gray up to 100%, subtle amber for boost portion
                         HStack(spacing: 0) {
                             Capsule()
-                                .fill(Color.accentColor.opacity(0.30))
+                                .fill(Color.primary.opacity(0.25))
                                 .frame(width: notchX, height: 4)
                             Capsule()
                                 .fill(Color.orange.opacity(0.35))
@@ -60,12 +60,11 @@ struct EarTrumpetSlider: View {
                     }
                 }
 
-                // 4. EarTrumpet Live Audio Peak Meter (bounces inside the track ON TOP of the volume range)
+                // 4. EarTrumpet Live Audio Peak Meter (richer, darker/brighter tone of the track color)
                 if peakWidth > 0.5 {
                     Capsule()
-                        .fill(Color.green)
+                        .fill(Color.primary.opacity(0.75))
                         .frame(width: peakWidth, height: 4)
-                        .shadow(color: Color.green.opacity(0.6), radius: 2, x: 0, y: 0)
                 }
 
                 // 5. Sleek Vertical Pill / Bar Thumb (Clean & high-contrast, no bulky AppKit oval)
@@ -77,7 +76,7 @@ struct EarTrumpetSlider: View {
                         Capsule()
                             .stroke(Color.black.opacity(0.25), lineWidth: 0.5)
                     )
-                    .shadow(color: Color.black.opacity(0.22), radius: 1.5, x: 0, y: 1)
+                    .shadow(color: Color.black.opacity(0.20), radius: 1.5, x: 0, y: 1)
                     .position(x: thumbX, y: height / 2)
             }
             .frame(height: height)
