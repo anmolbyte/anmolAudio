@@ -490,7 +490,7 @@ struct MenuBarView: View {
                         let volume = appVolumeStore.volume(for: app.bundleID)
                         let isMuted = appVolumeStore.isMuted(for: app.bundleID)
 
-                        HStack(spacing: 10) {
+                        HStack(spacing: 6) {
                             // App Icon with live playing badge and tooltip
                             ZStack(alignment: .bottomTrailing) {
                                 Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSImage())
@@ -519,17 +519,19 @@ struct MenuBarView: View {
                             .disabled(isBypassed)
                             .help(isMuted ? "Unmute \(app.displayName)" : "Mute \(app.displayName)")
 
-                            Slider(value: Binding(
-                                get: { Double(volume) },
-                                set: { appVolumeStore.setVolume(Float($0), for: app.bundleID) }
-                            ), in: 0...1)
-                            .disabled(isBypassed)
-                            .help("\(app.displayName): \(Int(round(volume * 100)))%")
+                            HStack(spacing: 4) {
+                                Slider(value: Binding(
+                                    get: { Double(volume) },
+                                    set: { appVolumeStore.setVolume(Float($0), for: app.bundleID) }
+                                ), in: 0...1)
+                                .disabled(isBypassed)
+                                .help("\(app.displayName): \(Int(round(volume * 100)))%")
 
-                            Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(isMuted ? .red : .secondary)
-                                .frame(width: 44, alignment: .trailing)
+                                Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(isMuted ? .red : .secondary)
+                                    .frame(minWidth: 28, alignment: .trailing)
+                            }
                         }
                     }
                 }
