@@ -30,53 +30,48 @@ struct EarTrumpetSlider: View {
             let peakWidth = max(0, min(fillWidth, fillWidth * CGFloat(sqrt(activePeak))))
 
             ZStack(alignment: .leading) {
-                // 1. Background Track Line (crisp contrast in both Light & Dark mode)
+                // 1. Background Track Line (black in white mode, white in black mode)
                 Capsule()
-                    .fill(Color.primary.opacity(0.12))
+                    .fill(Color.primary.opacity(0.15))
                     .frame(height: 4)
 
                 // 2. 100% Unity Gain Notch Divider
                 Rectangle()
-                    .fill(Color.primary.opacity(0.30))
+                    .fill(Color.primary.opacity(0.35))
                     .frame(width: 1.5, height: 7)
                     .position(x: notchX, y: height / 2)
 
-                // 3. Volume Track Range Fill (from 0 to thumb) in native macOS neutral gray
+                // 3. Volume Track Range Fill (from 0 to thumb)
                 if fillWidth > 0 && !isMuted {
                     if currentVolume <= 1.0 {
                         Capsule()
-                            .fill(Color.primary.opacity(0.25))
+                            .fill(Color.primary.opacity(0.30))
                             .frame(width: fillWidth, height: 4)
                     } else {
-                        // Segmented: Neutral gray up to 100%, subtle amber for boost portion
+                        // Segmented: Monochrome up to 100%, subtle amber for boost portion
                         HStack(spacing: 0) {
                             Capsule()
-                                .fill(Color.primary.opacity(0.25))
+                                .fill(Color.primary.opacity(0.30))
                                 .frame(width: notchX, height: 4)
                             Capsule()
-                                .fill(Color.orange.opacity(0.35))
+                                .fill(Color.orange.opacity(0.40))
                                 .frame(width: fillWidth - notchX, height: 4)
                         }
                     }
                 }
 
-                // 4. EarTrumpet Live Audio Peak Meter (richer, darker/brighter tone of the track color)
+                // 4. EarTrumpet Live Audio Peak Meter (Solid black in white mode, solid white in black mode)
                 if peakWidth > 0.5 {
                     Capsule()
-                        .fill(Color.primary.opacity(0.75))
+                        .fill(Color.primary)
                         .frame(width: peakWidth, height: 4)
                 }
 
-                // 5. Sleek Vertical Pill / Bar Thumb (Clean & high-contrast, no bulky AppKit oval)
+                // 5. Sleek Vertical Pill / Bar Thumb (Flat: Black in white mode, White in black mode, NO shadow)
                 let thumbX = max(2, min(width - 2, fillWidth))
                 Capsule()
-                    .fill(currentVolume > 1.0 ? Color.orange : Color.white)
+                    .fill(currentVolume > 1.0 ? Color.orange : Color.primary)
                     .frame(width: 4, height: 14)
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.black.opacity(0.25), lineWidth: 0.5)
-                    )
-                    .shadow(color: Color.black.opacity(0.20), radius: 1.5, x: 0, y: 1)
                     .position(x: thumbX, y: height / 2)
             }
             .frame(height: height)
@@ -145,7 +140,7 @@ struct EditablePercentageLabel: View {
                     .padding(.vertical, 1)
                     .background(
                         RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color.accentColor, lineWidth: 1)
+                            .stroke(Color.primary.opacity(0.4), lineWidth: 1)
                     )
                     .focused($isFocused)
                     .onSubmit {
