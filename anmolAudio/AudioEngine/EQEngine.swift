@@ -974,6 +974,16 @@ final class EQEngine: ObservableObject {
         tapInput.setLiveGain(bundleID: bundleID, gain: gain, isMuted: isMuted)
     }
 
+    /// Toggle per-app audio metering. Kept false when UI is closed (0% background CPU).
+    func setAppMeteringActive(_ active: Bool) {
+        tapInput.isMeteringActive = active
+    }
+
+    /// Current peak level for an app (0.0 to 1.0+).
+    func appPeakLevel(for bundleID: String) -> Float {
+        tapInput.peakLevel(for: bundleID)
+    }
+
     func reportStartFailure(_ message: String) {
         isRunning = false
         statusMessage = message

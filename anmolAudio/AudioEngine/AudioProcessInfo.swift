@@ -17,11 +17,13 @@ enum AudioProcessInfo {
         let bundleID: String
         let displayName: String
         let isPlaying: Bool
+        let launchDate: Date?
 
-        init(bundleID: String, displayName: String, isPlaying: Bool = false) {
+        init(bundleID: String, displayName: String, isPlaying: Bool = false, launchDate: Date? = nil) {
             self.bundleID = bundleID
             self.displayName = displayName
             self.isPlaying = isPlaying
+            self.launchDate = launchDate
         }
     }
 
@@ -186,13 +188,17 @@ enum AudioProcessInfo {
         "app.monitorcontrol"
     ]
 
+    /// Track the timestamp an app was first detected so that order is strictly stable.
+    private static var sessionFirstSeen: [String: Date] = [:]
+    private static let sessionLock = NSLock()
+
     /// Snapshot of real, user-facing applications (e.g. Safari, Spotify, Chrome, Music).
     ///
     /// EarTrumpet-style filtering:
     /// - Resolves helper processes (e.g. WebContent, Chrome renderers, Antigravity Helper) to the parent app.
     /// - Drops system daemons, background agents, and internal OS audio plumbing.
     /// - Regular GUI apps always show; background agents only appear if they are actively playing audio.
-    /// - Sorts actively playing apps to the top, followed by alphabetical order.
+    /// - Static ordering based on launch time: rows do NOT shuffle when apps play or pause.
     static func runningAudioApps() -> [App] {
         let objects = (try? allProcessObjects()) ?? []
         let ownPID = getpid()
@@ -221,27 +227,39 @@ enum AudioProcessInfo {
                 continue
             }
 
+            let launchDate: Date = running.launchDate ?? {
+                sessionLock.lock()
+                defer { sessionLock.unlock() }
+                if let existing = sessionFirstSeen[bundleID] { return existing }
+                let now = Date()
+                sessionFirstSeen[bundleID] = now
+                return now
+            }()
+
             let name = running.localizedName ?? displayName(forBundleID: bundleID, processObject: obj)
             if let existing = byBundleID[bundleID] {
                 let isNowPlaying = existing.isPlaying || playing
                 byBundleID[bundleID] = (
-                    app: App(bundleID: bundleID, displayName: name, isPlaying: isNowPlaying),
+                    app: App(bundleID: bundleID, displayName: name, isPlaying: isNowPlaying, launchDate: launchDate),
                     isPlaying: isNowPlaying
                 )
             } else {
                 byBundleID[bundleID] = (
-                    app: App(bundleID: bundleID, displayName: name, isPlaying: playing),
+                    app: App(bundleID: bundleID, displayName: name, isPlaying: playing, launchDate: launchDate),
                     isPlaying: playing
                 )
             }
         }
 
-        // Playing apps first, then alphabetical
-        return byBundleID.values.map(\.app).sorted {
-            if $0.isPlaying != $1.isPlaying {
-                return $0.isPlaying && !$1.isPlaying
+        // Static order: oldest launched apps first, new apps quietly append at bottom.
+        // Starting or pausing audio never causes rows to jump or reorder.
+        return byBundleID.values.map(\.app).sorted { a, b in
+            let dateA = a.launchDate ?? .distantPast
+            let dateB = b.launchDate ?? .distantPast
+            if dateA != dateB {
+                return dateA < dateB
             }
-            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
         }
     }
 

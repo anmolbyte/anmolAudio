@@ -323,7 +323,7 @@ private struct AppRowView: View {
                 Slider(value: Binding(
                     get: { Double(volume) },
                     set: { onVolumeChange(Float($0)) }
-                ), in: 0...1)
+                ), in: 0...1.5)
                 .frame(width: 110)
                 .disabled(isBypassed)
 

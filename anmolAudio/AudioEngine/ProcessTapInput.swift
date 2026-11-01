@@ -46,7 +46,12 @@ final class ProcessTapInput {
         var isMuted: Bool
         var isNeutral: Bool
         var rampCoefficient: Float
+        var peakLevel: Float
     }
+
+    /// When false, the audio thread skips peak amplitude calculations entirely (0% overhead).
+    /// Enabled only when the menu bar popover or UI meter view is active.
+    var isMeteringActive: Bool = false
 
     private let maxSlots = 64
     private let rtSlots: UnsafeMutablePointer<RTAppSlot>
@@ -74,7 +79,7 @@ final class ProcessTapInput {
         rightScratch.initialize(repeating: 0, count: scratchCapacityFrames)
 
         rtSlots = .allocate(capacity: maxSlots)
-        rtSlots.initialize(repeating: RTAppSlot(targetGain: 1, currentGain: 1, isMuted: false, isNeutral: true, rampCoefficient: 0), count: maxSlots)
+        rtSlots.initialize(repeating: RTAppSlot(targetGain: 1, currentGain: 1, isMuted: false, isNeutral: true, rampCoefficient: 0, peakLevel: 0), count: maxSlots)
     }
 
     deinit {
@@ -137,10 +142,14 @@ final class ProcessTapInput {
             }
         }
 
-        // Custom-volume apps: any app with non-neutral volume that has running processes
+        // Dedicated taps for:
+        // 1. Any app with non-neutral volume (custom volume or muted)
+        // 2. Any app currently producing audio output (so its peak meter is isolated)
         var customBundleIDs: [String] = []
-        for (bid, _) in processesByBundleID {
-            if let vol = appVolumes[bid], !vol.isNeutral {
+        for (bid, procs) in processesByBundleID {
+            let isCustom = (appVolumes[bid]?.isNeutral == false)
+            let isPlaying = procs.contains { AudioProcessInfo.isRunningOutput($0) }
+            if isCustom || isPlaying {
                 customBundleIDs.append(bid)
             }
         }
@@ -224,7 +233,7 @@ final class ProcessTapInput {
             let gain = vol.isMuted ? 0.0 : VolumeTaper.gain(position: vol.volume)
             initialTargetGains.append(gain)
             initialIsMuted.append(vol.isMuted)
-            initialIsNeutral.append(false)
+            initialIsNeutral.append(vol.isNeutral)
         }
 
         guard !newTapIDs.isEmpty else {
@@ -267,7 +276,8 @@ final class ProcessTapInput {
                 currentGain: initialTargetGains[i],
                 isMuted: initialIsMuted[i],
                 isNeutral: initialIsNeutral[i],
-                rampCoefficient: rampCoeff
+                rampCoefficient: rampCoeff,
+                peakLevel: 0.0
             )
         }
 
@@ -285,11 +295,27 @@ final class ProcessTapInput {
     func setLiveGain(bundleID: String, gain: Float, isMuted: Bool) {
         for i in 0..<slotCount {
             if slotBundleIDs[i] == bundleID {
-                rtSlots[i].targetGain = max(0.0, min(1.0, gain))
+                rtSlots[i].targetGain = max(0.0, min(2.0, gain))
                 rtSlots[i].isMuted = isMuted
                 break
             }
         }
+    }
+
+    /// Read the latest smoothed peak level for an app (0.0 to 1.0+).
+    /// Returns 0.0 if metering is inactive or the app is silent.
+    func peakLevel(for bundleID: String) -> Float {
+        guard isMeteringActive else { return 0.0 }
+        for i in 0..<slotCount {
+            if slotBundleIDs[i] == bundleID {
+                return rtSlots[i].peakLevel
+            }
+        }
+        // Fallback to slot 0 if slot 0 is the aggregate main tap
+        if slotCount > 0 && slotBundleIDs[0] == nil {
+            return rtSlots[0].peakLevel
+        }
+        return 0.0
     }
 
     /// Installs an IOProc on the aggregate device and starts it. The IOProc forwards
@@ -388,6 +414,7 @@ final class ProcessTapInput {
 
         let l = leftScratch
         let r = rightScratch
+        let isMetering = isMeteringActive
 
         // Sum each tap buffer into scratch with smooth gain ramping
         for s in 0..<count {
@@ -402,6 +429,21 @@ final class ProcessTapInput {
             let targetGain: Float = isMuted ? 0.0 : slotPtr.pointee.targetGain
             var currentGain = slotPtr.pointee.currentGain
             let ramp = slotPtr.pointee.rampCoefficient
+
+            // Compute peak amplitude if UI metering is currently active (0% overhead when closed)
+            if isMetering {
+                var rawPeak: Float = 0.0
+                let sampleCount = vDSP_Length(frames * bChannels)
+                vDSP_maxmgv(interleaved, 1, &rawPeak, sampleCount)
+                let effectiveGain = isMuted ? 0.0 : currentGain
+                let currentPeak = rawPeak * effectiveGain
+                let prev = slotPtr.pointee.peakLevel
+                if currentPeak >= prev {
+                    slotPtr.pointee.peakLevel = currentPeak
+                } else {
+                    slotPtr.pointee.peakLevel = prev * 0.82 // ~250ms decay
+                }
+            }
 
             // Fast path for muted or zero-gain taps
             if targetGain == 0.0 && currentGain == 0.0 {

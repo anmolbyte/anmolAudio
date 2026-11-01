@@ -13,25 +13,29 @@ private let log = Logger(subsystem: "app.anmol.anmolAudio", category: "AppVolume
 public enum VolumeTaper {
     @inline(__always)
     public static func gain(position: Float) -> Float {
-        let p = max(0.0, min(1.0, position))
-        return p * p * p
+        let p = max(0.0, min(1.5, position))
+        if p <= 1.0 {
+            return p * p * p
+        } else {
+            // Smooth boost above 1.0: 1.0 at 100%, 1.5 at 150% (+3.5 dB)
+            return 1.0 + (p - 1.0)
+        }
     }
 }
 
 /// Volume and mute settings for an individual application, keyed by bundle identifier.
 public struct AppVolume: Codable, Equatable {
-    /// Slider position: 0.0 (silent) to 1.0 (full/100%).
+    /// Slider position: 0.0 (silent), 1.0 (100% unity), up to 1.5 (150% boost).
     public var volume: Float = 1.0
     public var isMuted: Bool = false
 
-    /// Neutral = unmuted and full volume. Neutral apps are bundled into the default
-    /// Core Audio mixdown tap with bit-perfect passthrough.
+    /// Neutral = unmuted and exactly standard full volume (100% / 1.0).
     public var isNeutral: Bool {
-        volume >= 0.999 && !isMuted
+        abs(volume - 1.0) < 0.005 && !isMuted
     }
 
     public init(volume: Float = 1.0, isMuted: Bool = false) {
-        self.volume = max(0.0, min(1.0, volume))
+        self.volume = max(0.0, min(1.5, volume))
         self.isMuted = isMuted
     }
 
@@ -42,7 +46,7 @@ public struct AppVolume: Codable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let v = try container.decodeIfPresent(Float.self, forKey: .volume) ?? 1.0
-        self.volume = max(0.0, min(1.0, v))
+        self.volume = max(0.0, min(1.5, v))
         self.isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
     }
 
@@ -99,7 +103,7 @@ public final class AppVolumeStore: ObservableObject {
     }
 
     public func setVolume(_ value: Float, for bundleID: String) {
-        let clamped = max(0.0, min(1.0, value))
+        let clamped = max(0.0, min(1.5, value))
         var entry = volumes[bundleID] ?? AppVolume()
         let oldNeutral = entry.isNeutral
         entry.volume = clamped

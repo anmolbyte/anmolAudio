@@ -17,6 +17,8 @@ struct MenuBarView: View {
     @AppStorage("disableTransparency") private var disableTransparency: Bool = false
     @State private var runningAudioApps: [AudioProcessInfo.App] = []
     @State private var isAppVolumesExpanded: Bool = true
+    @State private var peakLevels: [String: Float] = [:]
+    @State private var meterTimer: Timer? = nil
     @State private var processListListener: AudioProcessListChangeListener?
     /// TCC state, lazily read at body time so the first popover open after
     /// onboarding doesn't briefly render the pre-consent gate.
@@ -199,10 +201,23 @@ struct MenuBarView: View {
             applySelectedPreset()
             reevaluateSuggestion()
             runningAudioApps = AudioProcessInfo.runningAudioApps()
+            if isAppVolumesExpanded {
+                startMetering()
+            }
             processListListener = AudioProcessListChangeListener {
                 Task { @MainActor in
                     runningAudioApps = AudioProcessInfo.runningAudioApps()
                 }
+            }
+        }
+        .onDisappear {
+            stopMetering()
+        }
+        .onChange(of: isAppVolumesExpanded) { _, expanded in
+            if expanded {
+                startMetering()
+            } else {
+                stopMetering()
             }
         }
         .onChange(of: selectedPresetID) { oldValue, newValue in
@@ -490,47 +505,45 @@ struct MenuBarView: View {
                         let volume = appVolumeStore.volume(for: app.bundleID)
                         let isMuted = appVolumeStore.isMuted(for: app.bundleID)
 
-                        HStack(spacing: 6) {
-                            // App Icon with live playing badge and tooltip
-                            ZStack(alignment: .bottomTrailing) {
-                                Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSImage())
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 22, height: 22)
-
-                                if app.isPlaying {
-                                    Circle()
-                                        .fill(Color.green)
-                                        .frame(width: 7, height: 7)
-                                        .overlay(Circle().stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1.5))
-                                        .offset(x: 2, y: 2)
-                                }
-                            }
-                            .help(app.displayName)
+                        HStack(spacing: 8) {
+                            // App Icon with tooltip
+                            Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSImage())
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 22, height: 22)
+                                .help(app.displayName)
 
                             Button {
                                 appVolumeStore.toggleMute(for: app.bundleID)
                             } label: {
                                 Image(systemName: isMuted ? "speaker.slash.fill" : (volume == 0 ? "speaker.fill" : "speaker.wave.2.fill"))
-                                    .foregroundStyle(isMuted ? .red : (isBypassed ? .secondary : .primary))
+                                    .foregroundStyle(isMuted ? .red : (isBypassed ? .secondary : (volume > 1.0 ? .orange : .primary)))
                                     .frame(width: 18)
                             }
                             .buttonStyle(.plain)
                             .disabled(isBypassed)
                             .help(isMuted ? "Unmute \(app.displayName)" : "Mute \(app.displayName)")
 
-                            HStack(spacing: 4) {
-                                Slider(value: Binding(
-                                    get: { Double(volume) },
-                                    set: { appVolumeStore.setVolume(Float($0), for: app.bundleID) }
-                                ), in: 0...1)
-                                .disabled(isBypassed)
+                            HStack(spacing: 6) {
+                                EarTrumpetSlider(
+                                    volume: Binding(
+                                        get: { volume },
+                                        set: { appVolumeStore.setVolume($0, for: app.bundleID) }
+                                    ),
+                                    peakLevel: peakLevels[app.bundleID] ?? 0.0,
+                                    isMuted: isMuted,
+                                    isBypassed: isBypassed
+                                )
                                 .help("\(app.displayName): \(Int(round(volume * 100)))%")
 
-                                Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(isMuted ? .red : .secondary)
-                                    .frame(minWidth: 28, alignment: .trailing)
+                                EditablePercentageLabel(
+                                    volume: Binding(
+                                        get: { volume },
+                                        set: { appVolumeStore.setVolume($0, for: app.bundleID) }
+                                    ),
+                                    isMuted: isMuted,
+                                    isBypassed: isBypassed
+                                )
                             }
                         }
                     }
@@ -898,6 +911,28 @@ struct MenuBarView: View {
         DispatchQueue.main.async {
             menuBarWindow?.orderOut(nil)
         }
+    }
+
+    private func startMetering() {
+        guard meterTimer == nil else { return }
+        engine.setAppMeteringActive(true)
+        meterTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak engine] _ in
+            Task { @MainActor [weak engine] in
+                guard let engine else { return }
+                var newPeaks: [String: Float] = [:]
+                for app in runningAudioApps {
+                    newPeaks[app.bundleID] = engine.appPeakLevel(for: app.bundleID)
+                }
+                self.peakLevels = newPeaks
+            }
+        }
+    }
+
+    private func stopMetering() {
+        meterTimer?.invalidate()
+        meterTimer = nil
+        engine.setAppMeteringActive(false)
+        peakLevels.removeAll()
     }
 
 }
