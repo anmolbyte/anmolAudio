@@ -68,11 +68,10 @@ struct EQEditorView: View {
 
     /// Preamp slider/label bounds. The engine itself doesn't clamp preamp
     /// (`EQEngine.setPreamp` just converts dB→linear), so this range is purely
-    /// the editor's floor. Extended below the old −12 dB so presets with large
-    /// positive band gains have room to breathe.
-    /// pull the master down further before the cascade clips. The 0 dB ceiling
-    /// stays: preamp only ever attenuates.
-    static let preampRange: ClosedRange<Float> = -24...0
+    /// the editor's floor. Extended to −40 dB so presets with large
+    /// positive band gains or quiet listening requirements have ample headroom.
+    /// The 0 dB ceiling stays: preamp only ever attenuates.
+    static let preampRange: ClosedRange<Float> = -40...0
 
     private var visiblePresets: [EQPreset] {
         anmolAudio.visiblePresets(catalog: presetCatalog, store: presetStore)

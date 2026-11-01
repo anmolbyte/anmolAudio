@@ -1,21 +1,29 @@
 import Foundation
 import AudioToolbox
 import CoreAudio
+import Accelerate
 import OSLog
 
 private let log = Logger(subsystem: "app.anmol.anmolAudio", category: "ProcessTapInput")
 
-/// Captures system audio output via a Core Audio Process Tap (macOS 14.2+) wrapped in a
-/// private aggregate device. We read samples by attaching an `AudioDeviceIOProc`
+/// Captures system audio output via one or more Core Audio Process Taps (macOS 14.2+)
+/// wrapped in a private aggregate device. We read samples by attaching an `AudioDeviceIOProc`
 /// directly to the aggregate — *not* via a HAL Output AU with input enabled. That
 /// distinction matters: an aggregate read through a HAL AU input is still treated as
 /// microphone capture and trips the orange privacy indicator, while a direct IOProc on
 /// a tap-backed aggregate is not.
 ///
+/// Multi-Tap Per-App Volume Architecture:
+///   - All applications at 100% volume / unmuted (neutral) are bundled into a single Core Audio
+///     mixdown tap (Tap 0) for zero-overhead, bit-perfect capture.
+///   - Any application with a custom volume slider or mute state receives a dedicated
+///     tap in the aggregate. In the single real-time IOProc callback, each app's buffer is scaled
+///     in-place with smooth gain ramping and summed into the EQ pipeline.
+///
 /// Lifetime:
-///   prepare() → creates tap + aggregate → returns `(deviceID, sampleRate)`
+///   prepare() → creates tap(s) + aggregate → returns `(deviceID, sampleRate)`
 ///   start()   → installs IOProc on the aggregate and starts the device
-///   stop()    → stops device, destroys IOProc, destroys aggregate, destroys tap
+///   stop()    → stops device, destroys IOProc, destroys aggregate, destroys taps
 final class ProcessTapInput {
     typealias FrameHandler = (_ left: UnsafeMutablePointer<Float>, _ right: UnsafeMutablePointer<Float>, _ frames: Int) -> Void
 
@@ -28,8 +36,22 @@ final class ProcessTapInput {
     /// the tap was created and rebuild for them.
     private(set) var tappedProcessObjects: Set<AudioObjectID> = []
 
-    private var tapID: AudioObjectID = 0
+    private var tapIDs: [AudioObjectID] = []
     private var procID: AudioDeviceIOProcID?
+
+    /// Real-time tap slot state read/written lock-free on Apple Silicon by the audio thread.
+    private struct RTAppSlot {
+        var targetGain: Float
+        var currentGain: Float
+        var isMuted: Bool
+        var isNeutral: Bool
+        var rampCoefficient: Float
+    }
+
+    private let maxSlots = 64
+    private let rtSlots: UnsafeMutablePointer<RTAppSlot>
+    private var slotCount: Int = 0
+    private var slotBundleIDs: [String?] = []
 
     /// Index of the first buffer that belongs to the tap in the aggregate's input
     /// AudioBufferList. The list is laid out as
@@ -39,7 +61,7 @@ final class ProcessTapInput {
     private var tapBufferStartIndex: Int = 0
     private var frameHandler: FrameHandler?
 
-    /// Per-channel scratch used to deinterleave the tap's interleaved buffer for the
+    /// Per-channel scratch used to deinterleave and mix tap buffers for the
     /// EQ processor (which expects two separate Float32 channel buffers). Sized for worst-case bursts.
     private let leftScratch: UnsafeMutablePointer<Float>
     private let rightScratch: UnsafeMutablePointer<Float>
@@ -50,6 +72,9 @@ final class ProcessTapInput {
         rightScratch = .allocate(capacity: scratchCapacityFrames)
         leftScratch.initialize(repeating: 0, count: scratchCapacityFrames)
         rightScratch.initialize(repeating: 0, count: scratchCapacityFrames)
+
+        rtSlots = .allocate(capacity: maxSlots)
+        rtSlots.initialize(repeating: RTAppSlot(targetGain: 1, currentGain: 1, isMuted: false, isNeutral: true, rampCoefficient: 0), count: maxSlots)
     }
 
     deinit {
@@ -58,18 +83,23 @@ final class ProcessTapInput {
         rightScratch.deinitialize(count: scratchCapacityFrames)
         leftScratch.deallocate()
         rightScratch.deallocate()
+
+        rtSlots.deinitialize(count: maxSlots)
+        rtSlots.deallocate()
     }
 
     // MARK: - Lifecycle
 
-    /// Creates the process tap and a private aggregate device that wraps it. Returns the
+    /// Creates the process taps and a private aggregate device that wraps them. Returns the
     /// aggregate device ID and its nominal sample rate (which follows the tap).
     ///
-    /// `excludedBundleIDs` is the user's per-app exclusion list — process objects
-    /// whose `kAudioProcessPropertyBundleID` matches are dropped from the tap
-    /// target list and bypass anmolAudio entirely (their audio flows through the
-    /// system mixer's normal output path).
-    func prepare(excludedBundleIDs: Set<String> = []) throws -> (deviceID: AudioDeviceID, sampleRate: Double) {
+    /// `excludedBundleIDs`: Apps that completely bypass anmolAudio (e.g. Call App or DAW).
+    /// `appVolumes`: Per-app volume and mute settings. Apps with non-neutral volume receive
+    /// dedicated taps with real-time gain multipliers.
+    func prepare(
+        excludedBundleIDs: Set<String> = [],
+        appVolumes: [String: AppVolume] = [:]
+    ) throws -> (deviceID: AudioDeviceID, sampleRate: Double) {
         try teardownTapAndAggregate()
 
         // 1. Look up our own audio process object so we can exclude ourselves from the
@@ -77,18 +107,10 @@ final class ProcessTapInput {
         //    into the tap.
         let ownProcessObject = try AudioProcessInfo.processObject(for: getpid())
 
-        // 2. Enumerate every audio process the system knows about and pass them
-        //    explicitly to `stereoMixdownOfProcesses`. The seemingly-equivalent
-        //    `stereoGlobalTapButExcludeProcesses` convenience init delivers silent
-        //    buffers in the presence of 3rd-party audio drivers (Rogue Amoeba's ARK
-        //    in particular) — the explicit-include form works around it.
-        //    Note: apps that start producing audio *after* this point aren't part of
-        //    this tap — a tap's target list can't be edited once created. The engine
-        //    watches for that (see `EQEngine.refreshTapTargetsIfNeeded`) and rebuilds
-        //    the tap, using `tappedProcessObjects` below as the reference set.
+        // 2. Enumerate every audio process the system knows about.
         let allProcesses = (try? AudioProcessInfo.allProcessObjects()) ?? []
         var excludedCount = 0
-        let targets = allProcesses.filter { obj in
+        let validProcesses = allProcesses.filter { obj in
             if obj == ownProcessObject { return false }
             if !excludedBundleIDs.isEmpty,
                let bundleID = AudioProcessInfo.bundleID(for: obj),
@@ -98,36 +120,118 @@ final class ProcessTapInput {
             }
             return true
         }
-        guard !targets.isEmpty else {
+
+        guard !validProcesses.isEmpty else {
             throw CoreAudioError.noProcessesToTap
         }
-        log.info("Tap targets: count=\(targets.count) excludedByUser=\(excludedCount)")
 
-        let tapUUID = UUID()
-        let description = CATapDescription(stereoMixdownOfProcesses: targets)
-        description.uuid = tapUUID
-        description.name = "anmolAudio System Tap"
-        // .mutedWhenTapped silences source apps' direct output at their device while
-        // we're consuming, so the user hears only the EQ'd version via HALOutput.
-        description.muteBehavior = .mutedWhenTapped
-        description.isPrivate = true
-        description.isExclusive = false
-        description.isMixdown = true
-        description.isMono = false
+        // 3. Separate processes into custom-volume apps vs neutral apps.
+        var processesByBundleID: [String: [AudioObjectID]] = [:]
+        var unbundledProcesses: [AudioObjectID] = []
 
-        var newTapID: AudioObjectID = 0
-        let tapStatus = AudioHardwareCreateProcessTap(description, &newTapID)
-        if tapStatus != noErr {
-            throw CoreAudioError.osStatus(tapStatus, "AudioHardwareCreateProcessTap")
+        for obj in validProcesses {
+            if let bid = AudioProcessInfo.bundleID(for: obj) {
+                processesByBundleID[bid, default: []].append(obj)
+            } else {
+                unbundledProcesses.append(obj)
+            }
         }
-        self.tapID = newTapID
 
-        // 3. Build the aggregate device. Mirrors Apple's CapturingSystemAudio sample:
-        //    - MainSubDevice = system default output (provides the IO clock)
-        //    - SubDeviceList containing the same output device
-        //    - Tap entry references `tapDescription.uuid.uuidString` — *not* the tap
-        //      object's `kAudioTapPropertyUID`. Passing the wrong one makes the
-        //      aggregate accept the tap but deliver only zeros.
+        // Custom-volume apps: any app with non-neutral volume that has running processes
+        var customBundleIDs: [String] = []
+        for (bid, _) in processesByBundleID {
+            if let vol = appVolumes[bid], !vol.isNeutral {
+                customBundleIDs.append(bid)
+            }
+        }
+        customBundleIDs.sort()
+
+        // Neutral processes: unbundled daemons + apps that are at default 100% volume
+        var neutralProcesses: [AudioObjectID] = unbundledProcesses
+        for (bid, procs) in processesByBundleID {
+            if !customBundleIDs.contains(bid) {
+                neutralProcesses.append(contentsOf: procs)
+            }
+        }
+
+        log.info("Tap targets: valid=\(validProcesses.count) neutral=\(neutralProcesses.count) customApps=\(customBundleIDs.count) excludedByUser=\(excludedCount)")
+
+        var newTapIDs: [AudioObjectID] = []
+        var tapListEntries: [[String: Any]] = []
+        var newSlotBundleIDs: [String?] = []
+        var initialTargetGains: [Float] = []
+        var initialIsMuted: [Bool] = []
+        var initialIsNeutral: [Bool] = []
+
+        // Tap 0: Neutral processes (if any exist)
+        if !neutralProcesses.isEmpty {
+            let tapUUID = UUID()
+            let desc = CATapDescription(stereoMixdownOfProcesses: neutralProcesses)
+            desc.uuid = tapUUID
+            desc.name = "anmolAudio System Tap (Main)"
+            desc.muteBehavior = .mutedWhenTapped
+            desc.isPrivate = true
+            desc.isExclusive = false
+            desc.isMixdown = true
+            desc.isMono = false
+
+            var newTapID: AudioObjectID = 0
+            let tapStatus = AudioHardwareCreateProcessTap(desc, &newTapID)
+            if tapStatus != noErr {
+                throw CoreAudioError.osStatus(tapStatus, "AudioHardwareCreateProcessTap (main)")
+            }
+            newTapIDs.append(newTapID)
+            tapListEntries.append([
+                kAudioSubTapDriftCompensationKey as String: true,
+                kAudioSubTapUIDKey as String: tapUUID.uuidString
+            ])
+            newSlotBundleIDs.append(nil)
+            initialTargetGains.append(1.0)
+            initialIsMuted.append(false)
+            initialIsNeutral.append(true)
+        }
+
+        // Taps 1..N: Dedicated taps for custom-volume apps
+        for bid in customBundleIDs {
+            guard let procs = processesByBundleID[bid], !procs.isEmpty else { continue }
+            guard newTapIDs.count < maxSlots else {
+                log.warning("Max tap slots (\(self.maxSlots)) reached; remaining apps stay in main tap")
+                break
+            }
+            let vol = appVolumes[bid] ?? AppVolume()
+            let tapUUID = UUID()
+            let desc = CATapDescription(stereoMixdownOfProcesses: procs)
+            desc.uuid = tapUUID
+            desc.name = "anmolAudio Tap (\(bid))"
+            desc.muteBehavior = .mutedWhenTapped
+            desc.isPrivate = true
+            desc.isExclusive = false
+            desc.isMixdown = true
+            desc.isMono = false
+
+            var newTapID: AudioObjectID = 0
+            let tapStatus = AudioHardwareCreateProcessTap(desc, &newTapID)
+            if tapStatus != noErr {
+                for t in newTapIDs { AudioHardwareDestroyProcessTap(t) }
+                throw CoreAudioError.osStatus(tapStatus, "AudioHardwareCreateProcessTap (\(bid))")
+            }
+            newTapIDs.append(newTapID)
+            tapListEntries.append([
+                kAudioSubTapDriftCompensationKey as String: true,
+                kAudioSubTapUIDKey as String: tapUUID.uuidString
+            ])
+            newSlotBundleIDs.append(bid)
+            let gain = vol.isMuted ? 0.0 : VolumeTaper.gain(position: vol.volume)
+            initialTargetGains.append(gain)
+            initialIsMuted.append(vol.isMuted)
+            initialIsNeutral.append(false)
+        }
+
+        guard !newTapIDs.isEmpty else {
+            throw CoreAudioError.noProcessesToTap
+        }
+
+        // 4. Build the aggregate device wrapping all taps.
         let mainSubDevice = try Self.systemDefaultOutput()
         let mainSubDeviceUID = mainSubDevice.uid
         let aggregateUID = "app.anmol.anmolAudio.aggregate.\(UUID().uuidString)"
@@ -141,29 +245,51 @@ final class ProcessTapInput {
             kAudioAggregateDeviceSubDeviceListKey as String: [
                 [kAudioSubDeviceUIDKey as String: mainSubDeviceUID]
             ],
-            kAudioAggregateDeviceTapListKey as String: [
-                [
-                    kAudioSubTapDriftCompensationKey as String: true,
-                    kAudioSubTapUIDKey as String: tapUUID.uuidString
-                ]
-            ]
+            kAudioAggregateDeviceTapListKey as String: tapListEntries
         ]
 
         var newAggregateID: AudioDeviceID = 0
         let aggStatus = AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &newAggregateID)
         if aggStatus != noErr {
-            AudioHardwareDestroyProcessTap(newTapID)
-            self.tapID = 0
+            for t in newTapIDs { AudioHardwareDestroyProcessTap(t) }
             throw CoreAudioError.osStatus(aggStatus, "AudioHardwareCreateAggregateDevice")
         }
-        self.deviceID = newAggregateID
-        self.tappedProcessObjects = Set(targets)
-        self.tapBufferStartIndex = Self.inputBufferCount(of: mainSubDevice.id)
-        log.info("Aggregate input layout: skipping \(self.tapBufferStartIndex) sub-device input buffer(s)")
 
         let sampleRate = try CoreAudioSampleRate.nominal(for: newAggregateID)
-        log.info("Process tap ready: tapID=\(newTapID) aggregateID=\(newAggregateID) rate=\(sampleRate)")
+        // 30 ms exponential gain smoothing coefficient
+        let rampCoeff = 1.0 - exp(-1.0 / (Float(sampleRate) * 0.030))
+
+        self.slotCount = newTapIDs.count
+        self.slotBundleIDs = newSlotBundleIDs
+        for i in 0..<newTapIDs.count {
+            rtSlots[i] = RTAppSlot(
+                targetGain: initialTargetGains[i],
+                currentGain: initialTargetGains[i],
+                isMuted: initialIsMuted[i],
+                isNeutral: initialIsNeutral[i],
+                rampCoefficient: rampCoeff
+            )
+        }
+
+        self.tapIDs = newTapIDs
+        self.deviceID = newAggregateID
+        self.tappedProcessObjects = Set(validProcesses)
+        self.tapBufferStartIndex = Self.inputBufferCount(of: mainSubDevice.id)
+
+        log.info("Process tap aggregate ready: \(newTapIDs.count) tap(s), aggregateID=\(newAggregateID), rate=\(sampleRate)")
         return (newAggregateID, sampleRate)
+    }
+
+    /// Dynamically update the live gain for a currently tapped application without restarting the engine.
+    /// Threading: Called from the main actor. Modifies atomic variables read by the real-time audio thread.
+    func setLiveGain(bundleID: String, gain: Float, isMuted: Bool) {
+        for i in 0..<slotCount {
+            if slotBundleIDs[i] == bundleID {
+                rtSlots[i].targetGain = max(0.0, min(1.0, gain))
+                rtSlots[i].isMuted = isMuted
+                break
+            }
+        }
     }
 
     /// Installs an IOProc on the aggregate device and starts it. The IOProc forwards
@@ -219,6 +345,8 @@ final class ProcessTapInput {
     private func teardownTapAndAggregate() throws {
         tappedProcessObjects = []
         tapBufferStartIndex = 0
+        slotCount = 0
+        slotBundleIDs = []
         if deviceID != 0 {
             let status = AudioHardwareDestroyAggregateDevice(deviceID)
             if status != noErr {
@@ -226,75 +354,100 @@ final class ProcessTapInput {
             }
             deviceID = 0
         }
-        if tapID != 0 {
+        for tapID in tapIDs {
             let status = AudioHardwareDestroyProcessTap(tapID)
             if status != noErr {
-                log.warning("AudioHardwareDestroyProcessTap(\(self.tapID)) returned \(status)")
+                log.warning("AudioHardwareDestroyProcessTap(\(tapID)) returned \(status)")
             }
-            tapID = 0
         }
+        tapIDs.removeAll()
     }
 
-    // MARK: - Audio thread
+    // MARK: - Audio thread (Real-time path: lock-free, zero-allocation)
 
     private func handle(inputData: UnsafePointer<AudioBufferList>) {
         guard let handler = frameHandler else { return }
         let abl = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
         guard abl.count > 0 else { return }
 
-        // Skip the main sub-device's own input streams. Without this an audio
-        // interface's line inputs are read as the left channel and the tap — still
-        // interleaved — as the right, which plays back one octave down at half speed.
-        //
-        // If the tap contributed no buffer of its own, every buffer in the list
-        // belongs to the sub-device. Falling back to one of those would push the
-        // interface's live line/mic input through the EQ and out to the speakers —
-        // and a direct IOProc on a tap-backed aggregate raises no privacy
-        // indicator. Emit nothing instead.
         let start = tapBufferStartIndex
         guard start < abl.count else { return }
-        let remaining = abl.count - start
+        let count = min(abl.count - start, slotCount)
+        guard count > 0 else { return }
 
-        // Deinterleaved stereo tap: two single-channel buffers.
-        if remaining >= 2,
-           abl[start].mNumberChannels == 1,
-           abl[start + 1].mNumberChannels == 1,
-           let leftRaw = abl[start].mData,
-           let rightRaw = abl[start + 1].mData {
-            let leftBytes = Int(abl[start].mDataByteSize)
-            let rightBytes = Int(abl[start + 1].mDataByteSize)
-            let frames = min(leftBytes, rightBytes) / MemoryLayout<Float>.size
-            guard frames > 0 else { return }
-            handler(leftRaw.assumingMemoryBound(to: Float.self),
-                    rightRaw.assumingMemoryBound(to: Float.self),
-                    frames)
-            return
-        }
+        // Compute frame count from the first tap buffer
+        let firstBuf = abl[start]
+        let channels = Int(firstBuf.mNumberChannels)
+        let totalFloats = Int(firstBuf.mDataByteSize) / MemoryLayout<Float>.size
+        let frames = channels > 0 ? totalFloats / channels : 0
+        guard frames > 0, frames <= scratchCapacityFrames else { return }
 
-        // Interleaved tap: one buffer carrying N channels. Deinterleave into scratch.
-        if let raw = abl[start].mData {
-            let l = leftScratch
-            let r = rightScratch
-            let channels = Int(abl[start].mNumberChannels)
-            let totalFloats = Int(abl[start].mDataByteSize) / MemoryLayout<Float>.size
-            let frames = channels > 0 ? totalFloats / channels : 0
-            guard frames > 0, frames <= scratchCapacityFrames else { return }
+        // Clear scratch buffers with SIMD zeroing
+        vDSP_vclr(leftScratch, 1, vDSP_Length(frames))
+        vDSP_vclr(rightScratch, 1, vDSP_Length(frames))
+
+        let l = leftScratch
+        let r = rightScratch
+
+        // Sum each tap buffer into scratch with smooth gain ramping
+        for s in 0..<count {
+            let buffer = abl[start + s]
+            guard let raw = buffer.mData else { continue }
             let interleaved = raw.assumingMemoryBound(to: Float.self)
-            if channels >= 2 {
+            let bChannels = Int(buffer.mNumberChannels)
+            guard bChannels >= 1 else { continue }
+
+            let slotPtr = rtSlots.advanced(by: s)
+            let isMuted = slotPtr.pointee.isMuted
+            let targetGain: Float = isMuted ? 0.0 : slotPtr.pointee.targetGain
+            var currentGain = slotPtr.pointee.currentGain
+            let ramp = slotPtr.pointee.rampCoefficient
+
+            // Fast path for muted or zero-gain taps
+            if targetGain == 0.0 && currentGain == 0.0 {
+                continue
+            }
+
+            // Fast path for steady-state unity gain
+            if slotPtr.pointee.isNeutral && abs(targetGain - 1.0) < 1e-4 && abs(currentGain - 1.0) < 1e-4 {
+                if bChannels >= 2 {
+                    for i in 0..<frames {
+                        l[i] += interleaved[i * bChannels]
+                        r[i] += interleaved[i * bChannels + 1]
+                    }
+                } else {
+                    for i in 0..<frames {
+                        let mono = interleaved[i]
+                        l[i] += mono
+                        r[i] += mono
+                    }
+                }
+                continue
+            }
+
+            // Ramped gain path for customized volume apps
+            if bChannels >= 2 {
                 for i in 0..<frames {
-                    l[i] = interleaved[i * channels]
-                    r[i] = interleaved[i * channels + 1]
+                    currentGain += ramp * (targetGain - currentGain)
+                    l[i] += interleaved[i * bChannels] * currentGain
+                    r[i] += interleaved[i * bChannels + 1] * currentGain
                 }
             } else {
-                // Mono: duplicate to both channels.
                 for i in 0..<frames {
-                    let s = interleaved[i]
-                    l[i] = s
-                    r[i] = s
+                    currentGain += ramp * (targetGain - currentGain)
+                    let mono = interleaved[i] * currentGain
+                    l[i] += mono
+                    r[i] += mono
                 }
             }
-            handler(l, r, frames)
+
+            if abs(targetGain - currentGain) < 1e-4 {
+                currentGain = targetGain
+            }
+            slotPtr.pointee.currentGain = currentGain
         }
+
+        handler(l, r, frames)
     }
 
     // MARK: - Core Audio object helpers

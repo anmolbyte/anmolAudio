@@ -6,6 +6,7 @@ struct UnifiedAppsView: View {
     @ObservedObject var outputPreferences: OutputSelectionPreferences
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
     @ObservedObject var voipAppsStore: VoIPAppsStore
+    @ObservedObject var appVolumeStore: AppVolumeStore
 
     @State private var runningApps: [AudioProcessInfo.App] = []
     @State private var processListListener: AudioProcessListChangeListener?
@@ -33,6 +34,7 @@ struct UnifiedAppsView: View {
         }
         let orphans = excludedAppsStore.excludedBundleIDs
             .union(voipAppsStore.voipBundleIDs)
+            .union(appVolumeStore.volumes.keys)
             .subtracting(seen)
             .map { bundleID in
                 Row(
@@ -99,7 +101,7 @@ struct UnifiedAppsView: View {
                     // App Rules table
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("Application Rules")
+                            Text("Applications & Volumes")
                                 .font(.headline)
 
                             Spacer()
@@ -122,6 +124,10 @@ struct UnifiedAppsView: View {
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
+                            Text("Volume")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 190, alignment: .leading)
                             Text("Bypass EQ")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -143,6 +149,14 @@ struct UnifiedAppsView: View {
                                     row: row,
                                     isBypassed: excludedAppsStore.contains(row.bundleID),
                                     isCallApp: voipAppsStore.contains(row.bundleID),
+                                    volume: appVolumeStore.volume(for: row.bundleID),
+                                    isMuted: appVolumeStore.isMuted(for: row.bundleID),
+                                    onVolumeChange: { newVol in
+                                        appVolumeStore.setVolume(newVol, for: row.bundleID)
+                                    },
+                                    onToggleMute: {
+                                        appVolumeStore.toggleMute(for: row.bundleID)
+                                    },
                                     onToggleBypass: {
                                         excludedAppsStore.toggle(row.bundleID)
                                     },
@@ -219,13 +233,13 @@ struct UnifiedAppsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Pause during calls")
                         .font(.subheadline.bold())
-                    Text("Completely bypasses and suspends anmolAudio processing whenever your microphone is in use. All audio plays unprocessed until you hang up.")
+                    Text("Completely stops anmolAudio when your microphone is active. Audio restores automatically when your call ends.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(14)
+        .padding(16)
         .frame(width: 320)
     }
 
@@ -259,6 +273,10 @@ private struct AppRowView: View {
     let row: UnifiedAppsView.Row
     let isBypassed: Bool
     let isCallApp: Bool
+    let volume: Float
+    let isMuted: Bool
+    let onVolumeChange: (Float) -> Void
+    let onToggleMute: () -> Void
     let onToggleBypass: () -> Void
     let onToggleCallApp: () -> Void
 
@@ -288,6 +306,33 @@ private struct AppRowView: View {
             }
 
             Spacer()
+
+            // Volume controls
+            HStack(spacing: 6) {
+                Button {
+                    onToggleMute()
+                } label: {
+                    Image(systemName: isMuted ? "speaker.slash.fill" : (volume == 0 ? "speaker.fill" : "speaker.wave.2.fill"))
+                        .foregroundStyle(isMuted ? .red : (isBypassed ? .secondary : .primary))
+                        .frame(width: 18)
+                }
+                .buttonStyle(.plain)
+                .disabled(isBypassed)
+                .help(isMuted ? "Unmute app" : "Mute app")
+
+                Slider(value: Binding(
+                    get: { Double(volume) },
+                    set: { onVolumeChange(Float($0)) }
+                ), in: 0...1)
+                .frame(width: 110)
+                .disabled(isBypassed)
+
+                Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(isMuted ? .red : .secondary)
+                    .frame(width: 44, alignment: .trailing)
+            }
+            .frame(width: 190)
 
             Toggle("", isOn: Binding(
                 get: { isBypassed },

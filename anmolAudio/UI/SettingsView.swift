@@ -14,6 +14,7 @@ struct SettingsView: View {
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var engine: EQEngine
+    @ObservedObject var appVolumeStore: AppVolumeStore
 
     @AppStorage("disableTransparency") private var disableTransparency: Bool = false
 
@@ -40,7 +41,8 @@ struct SettingsView: View {
             UnifiedAppsView(
                 outputPreferences: outputPreferences,
                 excludedAppsStore: excludedAppsStore,
-                voipAppsStore: VoIPAppsStore.shared
+                voipAppsStore: VoIPAppsStore.shared,
+                appVolumeStore: appVolumeStore
             )
             .tabItem { Label("Apps", systemImage: "square.stack.3d.up") }
 

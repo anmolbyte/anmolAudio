@@ -85,7 +85,9 @@ final class EQProcessor {
     }
 
     func setPreamp(dB: Float) {
-        let linear = pow(10.0, dB / 20.0)
+        // Preamp only ever attenuates; clamp to 0 dB ceiling to prevent digital clipping/blasts
+        let safeDB = min(0.0, dB)
+        let linear = pow(10.0, safeDB / 20.0)
         os_unfair_lock_lock(&lock)
         pendingPreampLinear = linear
         os_unfair_lock_unlock(&lock)
@@ -144,7 +146,9 @@ final class EQProcessor {
     // MARK: - Helpers
 
     private func publish(coefficients: [Double], preampDB: Float) {
-        let linear = pow(10.0, preampDB / 20.0)
+        // Preamp only ever attenuates; clamp to 0 dB ceiling to prevent digital clipping/blasts
+        let safeDB = min(0.0, preampDB)
+        let linear = pow(10.0, safeDB / 20.0)
         os_unfair_lock_lock(&lock)
         pendingCoefficients = coefficients
         coefficientsDirty = true
@@ -174,8 +178,10 @@ final class EQProcessor {
         self.sampleRate = sampleRate
         let coeffA = Self.flatCoefficients(for: presetA, sampleRate: sampleRate)
         let coeffB = Self.flatCoefficients(for: presetB, sampleRate: sampleRate)
-        let preampA = pow(10.0, (presetA.preamp + extraGainDBA) / 20.0)
-        let preampB = pow(10.0, (presetB.preamp + extraGainDBB) / 20.0)
+        let safePreampA = min(0.0, presetA.preamp + extraGainDBA)
+        let safePreampB = min(0.0, presetB.preamp + extraGainDBB)
+        let preampA = pow(10.0, safePreampA / 20.0)
+        let preampB = pow(10.0, safePreampB / 20.0)
 
         os_unfair_lock_lock(&lock)
         slotCoefficients = [coeffA, coeffB]

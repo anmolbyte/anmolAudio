@@ -9,11 +9,15 @@ struct MenuBarView: View {
     @ObservedObject var presetStore: PresetStore
     @ObservedObject var presetCatalog: PresetCatalog
     @ObservedObject var devicePresetMemory: DevicePresetMemory
+    @ObservedObject var appVolumeStore: AppVolumeStore
 
     @Environment(\.openWindow) private var openWindow
 
     @State private var selectedPresetID: UUID?
     @AppStorage("disableTransparency") private var disableTransparency: Bool = false
+    @State private var runningAudioApps: [AudioProcessInfo.App] = []
+    @State private var isAppVolumesExpanded: Bool = true
+    @State private var processListListener: AudioProcessListChangeListener?
     /// TCC state, lazily read at body time so the first popover open after
     /// onboarding doesn't briefly render the pre-consent gate.
     ///
@@ -147,6 +151,11 @@ struct MenuBarView: View {
             presetPicker
             presetActionsRow
 
+            if !runningAudioApps.isEmpty {
+                Divider()
+                appVolumesSection
+            }
+
             Divider()
 
             HStack {
@@ -189,6 +198,12 @@ struct MenuBarView: View {
             wireUp()
             applySelectedPreset()
             reevaluateSuggestion()
+            runningAudioApps = AudioProcessInfo.runningAudioApps()
+            processListListener = AudioProcessListChangeListener {
+                Task { @MainActor in
+                    runningAudioApps = AudioProcessInfo.runningAudioApps()
+                }
+            }
         }
         .onChange(of: selectedPresetID) { oldValue, newValue in
             applySelectedPreset()
@@ -222,7 +237,6 @@ struct MenuBarView: View {
                devicePresetMemory.lastPresetID(for: old.uid) == nil {
                 devicePresetMemory.setLastPresetID(id, for: old.uid)
             }
-            restartIfRunning()
             autoRecallPreset(for: newDevice)
             // Clear any stale "no close matches" notice — it was for the
             // previous device and would be misleading after the switch.
@@ -467,6 +481,70 @@ struct MenuBarView: View {
         }
     }
 
+    private var appVolumesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            DisclosureGroup(isExpanded: $isAppVolumesExpanded) {
+                VStack(spacing: 6) {
+                    ForEach(runningAudioApps) { app in
+                        let isBypassed = engine.effectiveExcludedBundleIDs.contains(app.bundleID)
+                        let volume = appVolumeStore.volume(for: app.bundleID)
+                        let isMuted = appVolumeStore.isMuted(for: app.bundleID)
+
+                        HStack(spacing: 8) {
+                            Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSImage())
+                                .resizable()
+                                .frame(width: 16, height: 16)
+
+                            Text(app.displayName)
+                                .font(.callout)
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Button {
+                                appVolumeStore.toggleMute(for: app.bundleID)
+                            } label: {
+                                Image(systemName: isMuted ? "speaker.slash.fill" : (volume == 0 ? "speaker.fill" : "speaker.wave.2.fill"))
+                                    .foregroundStyle(isMuted ? .red : (isBypassed ? .secondary : .primary))
+                                    .frame(width: 16)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isBypassed)
+                            .help(isMuted ? "Unmute app" : "Mute app")
+
+                            Slider(value: Binding(
+                                get: { Double(volume) },
+                                set: { appVolumeStore.setVolume(Float($0), for: app.bundleID) }
+                            ), in: 0...1)
+                            .frame(width: 80)
+                            .disabled(isBypassed)
+
+                            Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(isMuted ? .red : .secondary)
+                                .frame(width: 44, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.caption)
+                    Text("App Volumes")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(runningAudioApps.count)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
+                }
+            }
+        }
+    }
+
     /// Label column width shared by Preset/Output/Status rows so the right-hand
     /// controls line up cleanly. Picked to fit "Preset" / "Output" / "Status" at
     /// the body font without truncation.
@@ -600,20 +678,19 @@ struct MenuBarView: View {
     private func wireUp() {
         if selectedPresetID == nil {
             // Prefer the preset the user last used with this output device, if
-            // we have one and it's currently visible. Otherwise fall back to
+            // we have one and it's currently visible. If not, preserve the
+            // engine's currently active preset. Otherwise fall back to
             // whatever's first in the picker.
             if let device = deviceManager.selectedOutput,
                let lastID = devicePresetMemory.lastPresetID(for: device.uid),
                visiblePresets.contains(where: { $0.id == lastID }) {
                 selectedPresetID = lastID
+            } else if let currentID = engine.currentPreset?.id,
+                      visiblePresets.contains(where: { $0.id == currentID }) {
+                selectedPresetID = currentID
             } else {
                 selectedPresetID = visiblePresets.first?.id
             }
-        }
-        deviceManager.onTopologyChange = {
-            // If currently running, try to restart with the current selection.
-            // If selection went nil (device removed and no fallback), stop.
-            restartIfRunning()
         }
     }
 
@@ -795,15 +872,6 @@ struct MenuBarView: View {
         dismissMenuBarWindow()
         openWindow(id: "onboarding")
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func restartIfRunning() {
-        guard engine.isRunning else { return }
-        guard let output = deviceManager.selectedOutput else {
-            engine.stop()
-            return
-        }
-        engine.start(output: output)
     }
 
     /// MenuBarExtra(.window) has no programmatic dismiss API. The popover is the

@@ -86,6 +86,7 @@ final class EQEngine: ObservableObject {
     /// to avoid a retain cycle, not to handle real teardown).
     weak var excludedAppsStore: ExcludedAppsStore?
     weak var outputPreferences: OutputSelectionPreferences?
+    weak var appVolumeStore: AppVolumeStore?
 
     var effectiveExcludedBundleIDs: Set<String> {
         var set = excludedAppsStore?.excludedBundleIDs ?? []
@@ -180,6 +181,14 @@ final class EQEngine: ObservableObject {
 
     func start(output: AudioDevice) {
         log.info("start output=\(output.name)/\(output.uid) prev=\(self.activeOutput?.uid ?? "nil") running=\(self.isRunning)")
+
+        // Fast no-op: if the engine is already running on this exact device,
+        // do not touch the HAL output or process tap. Tearing down or rebinding
+        // while audio is playing causes temporary unmuting and audio blasting.
+        if isRunning, activeOutput?.uid == output.uid, halOutput.deviceID == output.id {
+            log.info("start: already running on \(output.name) — no-op")
+            return
+        }
 
         // If the engine is running but the requested output is a different
         // device, we MUST do a full restart. The process tap rides a private
@@ -338,7 +347,8 @@ final class EQEngine: ObservableObject {
         let tapSampleRate: Double
         do {
             let excludedBundleIDs = effectiveExcludedBundleIDs
-            let prepared = try tapInput.prepare(excludedBundleIDs: excludedBundleIDs)
+            let volumes = appVolumeStore?.volumes ?? [:]
+            let prepared = try tapInput.prepare(excludedBundleIDs: excludedBundleIDs, appVolumes: volumes)
             inputDeviceID = prepared.deviceID
             tapSampleRate = prepared.sampleRate
             activeSampleRate = tapSampleRate
@@ -662,19 +672,18 @@ final class EQEngine: ObservableObject {
     /// playing later without any further list change.
     ///
     /// Rebuilding costs a short fade-out/in, so we don't do it for every app
-    /// that merely shows up. We pay it immediately when one of the missing
-    /// processes is actually playing — its audio is bypassing anmolAudio right now,
-    /// which is the bug — and otherwise only while our own output is silent,
-    /// where the gap is inaudible.
+    /// that merely shows up. We rebuild only while our own output is silent,
+    /// where the gap is inaudible and Core Audio's temporary tap teardown
+    /// cannot blast the user with unattenuated audio.
     private func refreshTapTargetsIfNeeded() {
         guard isRunning, Self.followNewAudioAppsEnabled else { return }
         guard Date() >= tapRefreshCooldownUntil else { return }
         let untapped = untappedProcessObjects()
         guard !untapped.isEmpty else { return }
         let audible = untapped.contains { AudioProcessInfo.isRunningOutput($0) }
-        guard audible || outputIsSilent else { return }
+        guard outputIsSilent else { return }
         tapRefreshCooldownUntil = Date().addingTimeInterval(Self.tapRefreshMinInterval)
-        log.info("Tap is missing \(untapped.count) process(es) (playing=\(audible)); rebuilding")
+        log.info("Tap is missing \(untapped.count) process(es) (playing=\(audible)); rebuilding while silent")
         // force: the cooldown exists to damp restart loops from system events;
         // this path is already rate-limited by `tapRefreshCooldownUntil`, and
         // every rebuild strictly grows the target set, so it converges.
@@ -957,7 +966,12 @@ final class EQEngine: ObservableObject {
     /// cooldown exists to suppress restart loops from system events.
     func reEnumerateTapTargets() {
         guard isRunning else { return }
-        scheduleRestart(reason: "excluded apps changed", force: true)
+        scheduleRestart(reason: "tap targets changed", force: true)
+    }
+
+    /// Update live gain for an app without tearing down or rebuilding the tap.
+    func setLiveAppVolume(bundleID: String, gain: Float, isMuted: Bool) {
+        tapInput.setLiveGain(bundleID: bundleID, gain: gain, isMuted: isMuted)
     }
 
     func reportStartFailure(_ message: String) {

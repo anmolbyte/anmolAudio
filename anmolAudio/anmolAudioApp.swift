@@ -19,6 +19,7 @@ struct anmolAudioApp: App {
     @StateObject private var burnInTracker = BurnInTracker()
     @StateObject private var outputVolumeMonitor = OutputVolumeMonitor()
     @StateObject private var voipMonitor = VoIPMonitor()
+    @StateObject private var appVolumeStore = AppVolumeStore()
 
     @AppStorage("suspendDuringVoIP") private var suspendDuringVoIP: Bool = true
     @State private var wasSuspendedForVoIP: Bool = false
@@ -32,7 +33,8 @@ struct anmolAudioApp: App {
                 deviceManager: deviceManager,
                 presetStore: presetStore,
                 presetCatalog: presetCatalog,
-                devicePresetMemory: devicePresetMemory
+                devicePresetMemory: devicePresetMemory,
+                appVolumeStore: appVolumeStore
             )
         } label: {
             MenuBarLabel(
@@ -44,7 +46,8 @@ struct anmolAudioApp: App {
                 devicePresetMemory: devicePresetMemory,
                 burnInTracker: burnInTracker,
                 outputVolumeMonitor: outputVolumeMonitor,
-                excludedAppsStore: excludedAppsStore
+                excludedAppsStore: excludedAppsStore,
+                appVolumeStore: appVolumeStore
             )
         }
         .menuBarExtraStyle(.window)
@@ -164,7 +167,8 @@ struct anmolAudioApp: App {
                 outputPreferences: outputPreferences,
                 burnInTracker: burnInTracker,
                 deviceManager: deviceManager,
-                engine: engine
+                engine: engine,
+                appVolumeStore: appVolumeStore
             )
         }
         .defaultSize(width: 660, height: 675)
@@ -272,6 +276,7 @@ private struct MenuBarLabel: View {
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var outputVolumeMonitor: OutputVolumeMonitor
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
+    @ObservedObject var appVolumeStore: AppVolumeStore
 
     @Environment(\.openWindow) private var openWindow
 
@@ -309,23 +314,33 @@ private struct MenuBarLabel: View {
                 guard !didRunLaunchCoordinator else { return }
                 didRunLaunchCoordinator = true
 
-                // Seed the persistent engine with output preferences and excluded apps
+                // Seed the persistent engine with output preferences, excluded apps, and app volumes
                 engine.outputPreferences = outputPreferences
                 engine.excludedAppsStore = excludedAppsStore
+                engine.appVolumeStore = appVolumeStore
                 excludedAppsStore.onChange = { [weak e = engine] in
                     e?.reEnumerateTapTargets()
                 }
                 VoIPAppsStore.shared.onChange = { [weak e = engine] in
                     e?.reEnumerateTapTargets()
                 }
+                appVolumeStore.onConfigurationChange = { [weak e = engine] in
+                    e?.reEnumerateTapTargets()
+                }
+                appVolumeStore.onGainChange = { [weak e = engine] bundleID, gain, isMuted in
+                    e?.setLiveAppVolume(bundleID: bundleID, gain: gain, isMuted: isMuted)
+                }
 
                 // Wire up onTopologyChange at launch so hardware changes (plug/unplug)
                 // restart or adjust the engine even before the popover has ever been opened.
-                deviceManager.onTopologyChange = { [weak e = engine, weak dm = deviceManager] in
+                deviceManager.onTopologyChange = { [weak e = engine, weak dm = deviceManager, weak pc = presetCatalog, weak ps = presetStore, weak dpm = devicePresetMemory] in
                     guard let engine = e, engine.isRunning else { return }
                     guard let output = dm?.selectedOutput else {
                         engine.stop()
                         return
+                    }
+                    if let pc, let ps, let dpm {
+                        Self.applyPreset(for: output, engine: engine, presetCatalog: pc, presetStore: ps, devicePresetMemory: dpm)
                     }
                     engine.start(output: output)
                 }
@@ -371,9 +386,10 @@ private struct MenuBarLabel: View {
                 //    nothing to play through.
                 if pendingAutostart, let out = newOut {
                     pendingAutostart = false
+                    applyPreset(for: out)
                     engine.start(output: out)
-                    applyInitialPreset()
                 } else if let out = newOut, engine.isRunning {
+                    applyPreset(for: out)
                     engine.start(output: out)
                 } else if newOut == nil, engine.isRunning {
                     engine.stop()
@@ -393,8 +409,8 @@ private struct MenuBarLabel: View {
             }
             if let out = deviceManager.selectedOutput {
                 launchLog.info("Launch: authorized + autostart on, starting engine on \(out.name, privacy: .public)")
+                applyPreset(for: out)
                 engine.start(output: out)
-                applyInitialPreset()
             } else {
                 launchLog.info("Launch: authorized + autostart on, but no output device yet — deferring")
                 pendingAutostart = true
@@ -405,31 +421,47 @@ private struct MenuBarLabel: View {
         }
     }
 
-    /// Push the user's selected preset into the engine at autostart. Without
-    /// this, `currentPreset` stays nil until `MenuBarView.task` runs — and
-    /// because the popover content is mounted lazily by `MenuBarExtra`'s
-    /// `.window` style, that's the first time the user opens the menu. Until
-    /// then audio passed through with flat EQ. Resolution order mirrors
-    /// `MenuBarView.wireUp`: the per-device "last preset" memory wins, then
-    /// the first visible preset as a fallback.
-    private func applyInitialPreset() {
+    /// Push the user's selected preset into the engine at autostart or device switch.
+    /// Resolution order: the per-device "last preset" memory wins, then the
+    /// currently active preset (if already set and visible), then the first visible preset.
+    private func applyPreset(for device: AudioDevice?) {
+        Self.applyPreset(
+            for: device ?? deviceManager.selectedOutput,
+            engine: engine,
+            presetCatalog: presetCatalog,
+            presetStore: presetStore,
+            devicePresetMemory: devicePresetMemory
+        )
+    }
+
+    private static func applyPreset(
+        for device: AudioDevice?,
+        engine: EQEngine,
+        presetCatalog: PresetCatalog,
+        presetStore: PresetStore,
+        devicePresetMemory: DevicePresetMemory
+    ) {
         let visible = visiblePresets(catalog: presetCatalog, store: presetStore)
         let resolvedID: UUID? = {
-            if let device = deviceManager.selectedOutput,
+            if let device,
                let lastID = devicePresetMemory.lastPresetID(for: device.uid),
                visible.contains(where: { $0.id == lastID }) {
                 return lastID
+            }
+            if let currentID = engine.currentPreset?.id,
+               visible.contains(where: { $0.id == currentID }) {
+                return currentID
             }
             return visible.first?.id
         }()
         guard let id = resolvedID,
               let preset = visible.first(where: { $0.id == id }) else {
-            launchLog.info("applyInitialPreset: no resolvable preset (visible=\(visible.count))")
+            launchLog.info("applyPreset: no resolvable preset (visible=\(visible.count))")
             return
         }
         if engine.currentPreset?.id == preset.id { return }
         engine.apply(preset: preset)
-        launchLog.info("Applied initial preset on autostart: \(preset.name, privacy: .public)")
+        launchLog.info("Applied preset for device \(device?.name ?? "unknown", privacy: .public): \(preset.name, privacy: .public)")
     }
 }
 
