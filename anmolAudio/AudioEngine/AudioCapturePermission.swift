@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import CoreAudio
 
 private let log = Logger(subsystem: "app.anmol.anmolAudio", category: "AudioCapturePermission")
 
@@ -15,32 +16,43 @@ enum AudioCapturePermission {
         case unknown
     }
 
+    /// Tests whether Core Audio actually permits creating a process tap.
+    /// This is the ground truth on macOS 14.2+ and avoids issues with SPI code drift.
+    static func canCreateTap() -> Bool {
+        var tapID: AudioObjectID = 0
+        let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        let status = AudioHardwareCreateProcessTap(desc, &tapID)
+        if status == noErr {
+            AudioHardwareDestroyProcessTap(tapID)
+            return true
+        }
+        return false
+    }
+
     /// Returns the current permission status without prompting the user.
     static func preflight() -> Status {
+        if canCreateTap() {
+            return .authorized
+        }
+
         guard let fn = preflightSPI else {
             log.warning("TCCAccessPreflight SPI not available")
             return .unknown
         }
         let result = fn("kTCCServiceAudioCapture" as CFString, nil)
-        // TCCAccessPreflight: 0 = authorized, 1 = denied/needs-prompt, 2 = denied.
-        // We log the raw code because the codes are private SPI and have
-        // shifted across macOS releases — when users report "I granted it
-        // but anmolAudio still says blocked" the OSLog tells us whether preflight
-        // is genuinely returning the denied code or something the switch
-        // here is misclassifying.
+        // TCCAccessPreflight: 0 = authorized, 1 = not determined / prompt needed, 2 = denied.
         log.debug("TCCAccessPreflight(kTCCServiceAudioCapture) = \(result, privacy: .public)")
         switch result {
         case 0: return .authorized
-        case 1: return .denied
+        case 1: return .unknown
+        case 2: return .denied
         default: return .unknown
         }
     }
 
     /// Triggers the system permission prompt for `kTCCServiceAudioCapture` if the
     /// user has not yet granted/denied it. Calls `completion` on whichever queue
-    /// TCC delivers the result on (typically a background thread). The caller is
-    /// responsible for any required thread hop. (Bouncing back to main here would
-    /// deadlock `ensureAuthorized` since that helper blocks the calling thread.)
+    /// TCC delivers the result on (typically a background thread).
     static func request(completion: @escaping (Bool) -> Void) {
         guard let fn = requestSPI else {
             log.fault("TCCAccessRequest SPI not available")
@@ -48,20 +60,24 @@ enum AudioCapturePermission {
             return
         }
         fn("kTCCServiceAudioCapture" as CFString, nil) { granted in
-            log.notice("TCC audio-capture request finished: granted=\(granted, privacy: .public)")
-            completion(granted)
+            let tapAllowed = canCreateTap()
+            log.notice("TCC audio-capture request finished: granted=\(granted, privacy: .public), tapAllowed=\(tapAllowed, privacy: .public)")
+            completion(granted || tapAllowed)
         }
     }
 
     /// Asynchronous helper for UI actions. Returns true if authorized. Does not block the main thread.
     static func ensureAuthorizedAsync() async -> Bool {
+        if canCreateTap() {
+            return true
+        }
         switch preflight() {
         case .authorized:
             return true
         case .denied, .unknown:
             return await withCheckedContinuation { continuation in
                 request { granted in
-                    continuation.resume(returning: granted)
+                    continuation.resume(returning: granted || canCreateTap())
                 }
             }
         }
@@ -71,6 +87,9 @@ enum AudioCapturePermission {
     /// authorized. Blocks the calling thread on the prompt — only call from a
     /// background queue if blocking the main thread would freeze the UI.
     static func ensureAuthorized() -> Bool {
+        if canCreateTap() {
+            return true
+        }
         switch preflight() {
         case .authorized:
             return true
@@ -78,7 +97,7 @@ enum AudioCapturePermission {
             let sem = DispatchSemaphore(value: 0)
             var result = false
             request { granted in
-                result = granted
+                result = granted || canCreateTap()
                 sem.signal()
             }
             sem.wait()

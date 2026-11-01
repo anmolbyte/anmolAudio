@@ -111,19 +111,11 @@ struct OnboardingPermissionView: View {
         // to System Settings to grant the TCC permission.
         .showsInDockWhileVisible()
         .onAppear {
-            // Pick the mode that matches the actual TCC state right now.
-            // .authorized falls through to setup so the user lands on
-            // kickstart even if they re-open the window after granting.
-            switch AudioCapturePermission.preflight() {
-            case .denied:
-                mode = .denied
-            case .authorized:
-                ensureDefaultOutputSelected()
-                mode = .setup
-                ensureEngineRunning()
-                triggerAutoApplyIfNeeded()
-            case .unknown:
-                mode = .initial
+            checkAuthorizationStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if mode != .setup {
+                checkAuthorizationStatus()
             }
         }
         // Re-evaluate when the user (or auto-follow) swaps outputs — each
@@ -572,6 +564,20 @@ struct OnboardingPermissionView: View {
     }
 
     // MARK: - Actions
+
+    private func checkAuthorizationStatus() {
+        switch AudioCapturePermission.preflight() {
+        case .denied:
+            mode = .denied
+        case .authorized:
+            ensureDefaultOutputSelected()
+            mode = .setup
+            ensureEngineRunning()
+            triggerAutoApplyIfNeeded()
+        case .unknown:
+            mode = .initial
+        }
+    }
 
     /// Trigger the real OS prompt via ensureAuthorized(). If the user allows,
     /// start the engine and swap to the setup state — the user picks output
