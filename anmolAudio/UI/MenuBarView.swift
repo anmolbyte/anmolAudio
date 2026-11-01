@@ -21,7 +21,6 @@ struct MenuBarView: View {
     @State private var meterTimer: Timer? = nil
     @State private var processListListener: AudioProcessListChangeListener?
     @State private var hoveredAppBundleID: String? = nil
-    @State private var pinnedAppBundleID: String? = nil
     /// TCC state, lazily read at body time so the first popover open after
     /// onboarding doesn't briefly render the pre-consent gate.
     ///
@@ -220,7 +219,6 @@ struct MenuBarView: View {
         .onDisappear {
             stopMetering()
             hoveredAppBundleID = nil
-            pinnedAppBundleID = nil
         }
         .onChange(of: isAppVolumesExpanded) { _, expanded in
             if expanded {
@@ -513,64 +511,47 @@ struct MenuBarView: View {
                         let isBypassed = engine.effectiveExcludedBundleIDs.contains(app.bundleID)
                         let volume = appVolumeStore.volume(for: app.bundleID)
                         let isMuted = appVolumeStore.isMuted(for: app.bundleID)
-                        let isShowingName = (hoveredAppBundleID == app.bundleID || pinnedAppBundleID == app.bundleID)
+                        let isHovered = (hoveredAppBundleID == app.bundleID)
 
                         HStack(spacing: 8) {
-                            // App Icon with instant hover tooltip & click-to-pin
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    if pinnedAppBundleID == app.bundleID {
-                                        pinnedAppBundleID = nil
-                                    } else {
-                                        pinnedAppBundleID = app.bundleID
+                            // App Icon with instant hover tooltip
+                            Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSWorkspace.shared.icon(for: .application))
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
+                                .onHover { hovering in
+                                    withAnimation(.easeInOut(duration: 0.12)) {
+                                        if hovering {
+                                            hoveredAppBundleID = app.bundleID
+                                        } else if hoveredAppBundleID == app.bundleID {
+                                            hoveredAppBundleID = nil
+                                        }
                                     }
                                 }
-                            } label: {
-                                Image(nsImage: AudioProcessInfo.icon(forBundleID: app.bundleID) ?? NSWorkspace.shared.icon(for: .application))
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 22, height: 22)
-                                    .scaleEffect(isShowingName ? 1.08 : 1.0)
-                                    .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isShowingName)
-                            }
-                            .buttonStyle(.plain)
-                            .onHover { hovering in
-                                if hovering {
-                                    NSCursor.pointingHand.set()
-                                } else {
-                                    NSCursor.arrow.set()
-                                }
-                                withAnimation(.easeInOut(duration: 0.12)) {
-                                    if hovering {
-                                        hoveredAppBundleID = app.bundleID
-                                    } else if hoveredAppBundleID == app.bundleID {
-                                        hoveredAppBundleID = nil
+                                .help(app.displayName)
+                                .overlay(alignment: .topLeading) {
+                                    if isHovered {
+                                        Text(app.displayName)
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.primary)
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 3.5)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                                    .fill(Color(nsColor: .windowBackgroundColor))
+                                                    .shadow(color: Color.black.opacity(0.28), radius: 3, x: 0, y: 1.5)
+                                            )
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                                    .stroke(Color.primary.opacity(0.15), lineWidth: 0.75)
+                                            )
+                                            .fixedSize()
+                                            .offset(y: -24)
+                                            .allowsHitTesting(false)
+                                            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottomLeading)))
                                     }
                                 }
-                            }
-                            .help(app.displayName)
-                            .overlay(alignment: .topLeading) {
-                                if isShowingName {
-                                    Text(app.displayName)
-                                        .font(.caption2.weight(.semibold))
-                                        .foregroundStyle(.primary)
-                                        .padding(.horizontal, 7)
-                                        .padding(.vertical, 3.5)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                                .fill(Color(nsColor: .windowBackgroundColor))
-                                                .shadow(color: Color.black.opacity(0.28), radius: 3, x: 0, y: 1.5)
-                                        )
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                                .stroke(Color.primary.opacity(0.15), lineWidth: 0.75)
-                                        )
-                                        .fixedSize()
-                                        .offset(y: -24)
-                                        .allowsHitTesting(false)
-                                        .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottomLeading)))
-                                }
-                            }
 
                             Button {
                                 appVolumeStore.toggleMute(for: app.bundleID)
@@ -605,7 +586,7 @@ struct MenuBarView: View {
                                 )
                             }
                         }
-                        .zIndex(isShowingName ? 999 : 0)
+                        .zIndex(isHovered ? 999 : 0)
                     }
                 }
                 .padding(.top, 4)
