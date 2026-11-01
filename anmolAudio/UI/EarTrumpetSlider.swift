@@ -26,9 +26,8 @@ struct EarTrumpetSlider: View {
 
             // Peak level bar inside the track (bounces with real-time music up to current volume)
             let activePeak = (!isMuted && !isBypassed) ? max(0.0, min(1.0, peakLevel)) : 0.0
-            // sqrt expansion gives punchy, natural VU-meter ballistics
-            let peakFraction = CGFloat(sqrt(activePeak)) * CGFloat(currentVolume / maxVolume)
-            let peakWidth = max(0, min(fillWidth, width * peakFraction))
+            // sqrt expansion gives punchy, natural VU-meter ballistics, scaled directly to the fader fill
+            let peakWidth = max(0, min(fillWidth, fillWidth * CGFloat(sqrt(activePeak))))
 
             ZStack(alignment: .leading) {
                 // 1. Background Track Line (crisp contrast in both Light & Dark mode)
@@ -42,30 +41,31 @@ struct EarTrumpetSlider: View {
                     .frame(width: 1.5, height: 7)
                     .position(x: notchX, y: height / 2)
 
-                // 3. EarTrumpet Live Audio Peak Meter (bounces inside the track)
-                if peakWidth > 1 {
-                    Capsule()
-                        .fill(Color.green.opacity(0.90))
-                        .frame(width: peakWidth, height: 4)
-                }
-
-                // 4. Volume Track Fill (Blue for <=100%, Orange in boost zone >100%)
+                // 3. Volume Track Range Fill (from 0 to thumb)
                 if fillWidth > 0 && !isMuted {
                     if currentVolume <= 1.0 {
                         Capsule()
-                            .fill(Color.accentColor)
+                            .fill(Color.accentColor.opacity(0.30))
                             .frame(width: fillWidth, height: 4)
                     } else {
                         // Segmented: Blue up to 100%, Orange for boost portion
                         HStack(spacing: 0) {
                             Capsule()
-                                .fill(Color.accentColor)
+                                .fill(Color.accentColor.opacity(0.30))
                                 .frame(width: notchX, height: 4)
                             Capsule()
-                                .fill(Color.orange)
+                                .fill(Color.orange.opacity(0.35))
                                 .frame(width: fillWidth - notchX, height: 4)
                         }
                     }
+                }
+
+                // 4. EarTrumpet Live Audio Peak Meter (bounces inside the track ON TOP of the volume range)
+                if peakWidth > 0.5 {
+                    Capsule()
+                        .fill(Color.green)
+                        .frame(width: peakWidth, height: 4)
+                        .shadow(color: Color.green.opacity(0.6), radius: 2, x: 0, y: 0)
                 }
 
                 // 5. Sleek Vertical Pill / Bar Thumb (Clean & high-contrast, no bulky AppKit oval)

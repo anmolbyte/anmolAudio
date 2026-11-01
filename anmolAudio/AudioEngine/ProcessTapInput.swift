@@ -142,20 +142,14 @@ final class ProcessTapInput {
             }
         }
 
-        // Dedicated taps for:
-        // 1. Any app with non-neutral volume (custom volume or muted)
-        // 2. Any app currently producing audio output (so its peak meter is isolated)
-        var customBundleIDs: [String] = []
-        for (bid, procs) in processesByBundleID {
-            let isCustom = (appVolumes[bid]?.isNeutral == false)
-            let isPlaying = procs.contains { AudioProcessInfo.isRunningOutput($0) }
-            if isCustom || isPlaying {
-                customBundleIDs.append(bid)
-            }
+        // Dedicated taps for each detected GUI app so each app has its own isolated peak meter
+        // and can have its gain adjusted dynamically without rebuilding the tap.
+        var customBundleIDs = Array(processesByBundleID.keys).sorted()
+        if customBundleIDs.count >= maxSlots {
+            customBundleIDs = Array(customBundleIDs.prefix(maxSlots - 1))
         }
-        customBundleIDs.sort()
 
-        // Neutral processes: unbundled daemons + apps that are at default 100% volume
+        // Neutral processes: unbundled daemons + any apps beyond maxSlots
         var neutralProcesses: [AudioObjectID] = unbundledProcesses
         for (bid, procs) in processesByBundleID {
             if !customBundleIDs.contains(bid) {
@@ -435,11 +429,9 @@ final class ProcessTapInput {
                 var rawPeak: Float = 0.0
                 let sampleCount = vDSP_Length(frames * bChannels)
                 vDSP_maxmgv(interleaved, 1, &rawPeak, sampleCount)
-                let effectiveGain = isMuted ? 0.0 : currentGain
-                let currentPeak = rawPeak * effectiveGain
                 let prev = slotPtr.pointee.peakLevel
-                if currentPeak >= prev {
-                    slotPtr.pointee.peakLevel = currentPeak
+                if rawPeak >= prev {
+                    slotPtr.pointee.peakLevel = rawPeak
                 } else {
                     slotPtr.pointee.peakLevel = prev * 0.82 // ~250ms decay
                 }

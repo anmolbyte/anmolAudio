@@ -210,6 +210,11 @@ struct MenuBarView: View {
                 }
             }
         }
+        .onAppear {
+            if isAppVolumesExpanded {
+                startMetering()
+            }
+        }
         .onDisappear {
             stopMetering()
         }
@@ -916,16 +921,18 @@ struct MenuBarView: View {
     private func startMetering() {
         guard meterTimer == nil else { return }
         engine.setAppMeteringActive(true)
-        meterTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak engine] _ in
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak engine] _ in
             Task { @MainActor [weak engine] in
                 guard let engine else { return }
                 var newPeaks: [String: Float] = [:]
-                for app in runningAudioApps {
+                for app in self.runningAudioApps {
                     newPeaks[app.bundleID] = engine.appPeakLevel(for: app.bundleID)
                 }
                 self.peakLevels = newPeaks
             }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.meterTimer = timer
     }
 
     private func stopMetering() {
