@@ -125,14 +125,10 @@ public final class AppVolumeStore: ObservableObject {
     }
 
     public func reset(for bundleID: String) {
-        guard let oldEntry = volumes[bundleID] else { return }
-        let oldNeutral = oldEntry.isNeutral
+        guard volumes[bundleID] != nil else { return }
         volumes.removeValue(forKey: bundleID)
         scheduleSave()
         onGainChange?(bundleID, 1.0, false)
-        if !oldNeutral {
-            onConfigurationChange?()
-        }
     }
 
     private func apply(_ entry: AppVolume, for bundleID: String, previousNeutral: Bool) {
@@ -143,15 +139,9 @@ public final class AppVolumeStore: ObservableObject {
         }
         scheduleSave()
 
-        // Inform audio thread of live gain update
+        // Inform audio thread of live gain update (lock-free, zero tap restart)
         let gain = entry.isMuted ? 0.0 : VolumeTaper.gain(position: entry.volume)
         onGainChange?(bundleID, gain, entry.isMuted)
-
-        // Topology rebuild only required when an app transitions to/from neutral
-        if entry.isNeutral != previousNeutral {
-            log.info("App \(bundleID, privacy: .public) neutral state changed (\(previousNeutral) -> \(entry.isNeutral)); requesting tap reconfiguration")
-            onConfigurationChange?()
-        }
     }
 
     private func scheduleSave() {

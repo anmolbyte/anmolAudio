@@ -183,7 +183,6 @@ enum AudioProcessInfo {
         "com.apple.PowerChime",
         "com.apple.loginwindow",
         "com.apple.controlcenter",
-        "com.apple.systemsoundserverd",
         "com.apple.audio.coreaudiod",
         "app.monitorcontrol"
     ]
@@ -197,6 +196,7 @@ enum AudioProcessInfo {
     /// EarTrumpet-style filtering:
     /// - Resolves helper processes (e.g. WebContent, Chrome renderers, Antigravity Helper) to the parent app.
     /// - Drops system daemons, background agents, and internal OS audio plumbing.
+    /// - Surfaces "System Sounds" (systemsoundserverd) for Trash, Finder, and UI effects.
     /// - Regular GUI apps always show; background agents only appear if they are actively playing audio.
     /// - Static ordering based on launch time: rows do NOT shuffle when apps play or pause.
     static func runningAudioApps() -> [App] {
@@ -209,13 +209,39 @@ enum AudioProcessInfo {
             let ownerPid = responsiblePID(for: processPid)
             if ownerPid == ownPID || processPid == ownPID { continue }
 
-            guard let running = NSRunningApplication(processIdentifier: ownerPid)
-                ?? NSRunningApplication(processIdentifier: processPid),
-                let bundleID = running.bundleIdentifier,
-                bundleID != Bundle.main.bundleIdentifier
-            else { continue }
+            let rawBid = bundleID(for: obj) ?? ""
+            let isSystemSound = (rawBid == "systemsoundserverd" || rawBid == "com.apple.systemsoundserverd")
 
-            if blockedBundlePrefixes.contains(where: { bundleID.lowercased().hasPrefix($0.lowercased()) }) {
+            let bundleID: String
+            let name: String
+            let isRegular: Bool
+            let launchDate: Date
+
+            if isSystemSound {
+                bundleID = "systemsoundserverd"
+                name = "System Sounds"
+                isRegular = true
+                launchDate = .distantPast // Pin System Sounds consistently at top
+            } else if let running = NSRunningApplication(processIdentifier: ownerPid)
+                ?? NSRunningApplication(processIdentifier: processPid),
+                let bid = running.bundleIdentifier,
+                bid != Bundle.main.bundleIdentifier {
+
+                if blockedBundlePrefixes.contains(where: { bid.lowercased().hasPrefix($0.lowercased()) }) {
+                    continue
+                }
+                bundleID = bid
+                name = running.localizedName ?? displayName(forBundleID: bid, processObject: obj)
+                isRegular = running.activationPolicy == .regular
+                launchDate = running.launchDate ?? {
+                    sessionLock.lock()
+                    defer { sessionLock.unlock() }
+                    if let existing = sessionFirstSeen[bundleID] { return existing }
+                    let now = Date()
+                    sessionFirstSeen[bundleID] = now
+                    return now
+                }()
+            } else {
                 continue
             }
 
@@ -223,20 +249,10 @@ enum AudioProcessInfo {
 
             // Real app filter: Regular GUI apps always; accessory/background
             // helpers only if they are actually producing audio right now.
-            guard running.activationPolicy == .regular || playing else {
+            guard isRegular || playing else {
                 continue
             }
 
-            let launchDate: Date = running.launchDate ?? {
-                sessionLock.lock()
-                defer { sessionLock.unlock() }
-                if let existing = sessionFirstSeen[bundleID] { return existing }
-                let now = Date()
-                sessionFirstSeen[bundleID] = now
-                return now
-            }()
-
-            let name = running.localizedName ?? displayName(forBundleID: bundleID, processObject: obj)
             if let existing = byBundleID[bundleID] {
                 let isNowPlaying = existing.isPlaying || playing
                 byBundleID[bundleID] = (
@@ -289,6 +305,11 @@ enum AudioProcessInfo {
 
     /// Resolves a Finder icon for a bundle ID.
     static func icon(forBundleID bundleID: String) -> NSImage? {
+        if bundleID == "systemsoundserverd" || bundleID == "com.apple.systemsoundserverd" {
+            let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
+            return NSImage(systemSymbolName: "speaker.wave.2.circle.fill", accessibilityDescription: "System Sounds")?
+                .withSymbolConfiguration(config)
+        }
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
            let icon = app.icon {
             return icon
