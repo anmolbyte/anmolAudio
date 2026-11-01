@@ -495,10 +495,19 @@ struct MenuBarView: View {
                                 .resizable()
                                 .frame(width: 16, height: 16)
 
-                            Text(app.displayName)
-                                .font(.callout)
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            HStack(spacing: 5) {
+                                Text(app.displayName)
+                                    .font(.callout)
+                                    .lineLimit(1)
+
+                                if app.isPlaying {
+                                    Circle()
+                                        .fill(Color.green)
+                                        .frame(width: 6, height: 6)
+                                        .help("Playing audio")
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                             Button {
                                 appVolumeStore.toggleMute(for: app.bundleID)

@@ -8,50 +8,56 @@ private let log = Logger(subsystem: "app.anmol.anmolAudio", category: "AudioProc
 
 /// Helpers for enumerating the Core Audio process-object list and translating
 /// process objects to user-meaningful identifiers (bundle ID, app name, icon).
-///
-/// Lives separately from `ProcessTapInput` because the same enumeration drives
-/// two clients: the tap target list (engine, audio thread setup) and the
-/// excluded-apps UI (main thread, needs display metadata).
 enum AudioProcessInfo {
-    /// One Core Audio process object's user-facing identity. Multiple process
-    /// objects can share a bundle ID (e.g., one per Safari WebContent process);
-    /// `runningAudioApps()` deduplicates so the UI shows the app once.
+    /// One user-facing application that owns one or more Core Audio process objects.
+    /// Multiple helper processes (Safari WebContent, Chrome renderers, Electron helpers)
+    /// group under their parent application here.
     struct App: Identifiable, Hashable {
         var id: String { bundleID }
         let bundleID: String
         let displayName: String
+        let isPlaying: Bool
+
+        init(bundleID: String, displayName: String, isPlaying: Bool = false) {
+            self.bundleID = bundleID
+            self.displayName = displayName
+            self.isPlaying = isPlaying
+        }
+    }
+
+    // MARK: - Responsible process lookup
+
+    private typealias ResponsiblePIDFunction = @convention(c) (pid_t) -> pid_t
+
+    /// responsibility_get_pid_responsible_for_pid maps helper processes (browser tabs,
+    /// Electron renderers) to the user-facing app that spawned them — the exact same attribution
+    /// macOS TCC uses.
+    private static let responsiblePIDFunction: ResponsiblePIDFunction? = {
+        guard let handle = dlopen(nil, RTLD_NOW),
+              let symbol = dlsym(handle, "responsibility_get_pid_responsible_for_pid")
+        else { return nil }
+        return unsafeBitCast(symbol, to: ResponsiblePIDFunction.self)
+    }()
+
+    static func responsiblePID(for pid: pid_t) -> pid_t {
+        guard let function = responsiblePIDFunction else { return pid }
+        let owner = function(pid)
+        return owner > 0 ? owner : pid
     }
 
     // MARK: - Bundle ID lookup
 
-    /// Reads `kAudioProcessPropertyBundleID` from a Core Audio process object.
-    /// Returns nil for processes that have no bundle (daemons, command-line
-    /// helpers) — those can't be matched against the user's exclusion list and
-    /// always go through the EQ.
+    /// Reads `kAudioProcessPropertyBundleID` from a Core Audio process object,
+    /// resolving helper processes to their parent application bundle ID.
     static func bundleID(for processObject: AudioObjectID) -> String? {
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioProcessPropertyBundleID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var cfRef: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        let status = AudioObjectGetPropertyData(processObject, &addr, 0, nil, &size, &cfRef)
-        if status == noErr, let cf = cfRef?.takeRetainedValue() {
-            let value = cf as String
-            if !value.isEmpty {
-                return value
-            }
-        }
-
-        // Fallback: daemons and system call helpers may not vend a CFBundleIdentifier via CoreAudio.
-        // Resolve using NSRunningApplication or proc_pidpath to guarantee call daemons like
-        // avconferenced or FaceTime are properly recognized and excluded.
         if let processPid = pid(for: processObject) {
-            if let runningApp = NSRunningApplication(processIdentifier: processPid),
+            let ownerPid = responsiblePID(for: processPid)
+            if let runningApp = NSRunningApplication(processIdentifier: ownerPid)
+                ?? NSRunningApplication(processIdentifier: processPid),
                let bid = runningApp.bundleIdentifier, !bid.isEmpty {
                 return bid
             }
+
             var buffer = [CChar](repeating: 0, count: 4096)
             let length = proc_pidpath(processPid, &buffer, UInt32(buffer.count))
             if length > 0 {
@@ -68,14 +74,27 @@ enum AudioProcessInfo {
                 }
             }
         }
+
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioProcessPropertyBundleID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var cfRef: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = AudioObjectGetPropertyData(processObject, &addr, 0, nil, &size, &cfRef)
+        if status == noErr, let cf = cfRef?.takeRetainedValue() {
+            let value = cf as String
+            if !value.isEmpty {
+                return value
+            }
+        }
+
         return nil
     }
 
     /// True while the process has an IO proc running output — it is playing
-    /// audio *right now*, not merely registered with Core Audio. The engine
-    /// uses this to tell "some app appeared in the process list" apart from
-    /// "audio is coming out of an app our tap doesn't cover", which is the
-    /// only case worth interrupting playback to rebuild the tap for.
+    /// audio *right now*, not merely registered with Core Audio.
     static func isRunningOutput(_ processObject: AudioObjectID) -> Bool {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioProcessPropertyIsRunningOutput,
@@ -89,7 +108,6 @@ enum AudioProcessInfo {
     }
 
     /// Reads `kAudioProcessPropertyPID` from a Core Audio process object.
-    /// Used to look up an `NSRunningApplication` for display name / icon.
     static func pid(for processObject: AudioObjectID) -> pid_t? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioProcessPropertyPID,
@@ -105,7 +123,6 @@ enum AudioProcessInfo {
     // MARK: - Process object enumeration
 
     /// Resolves the Core Audio process object representing the given pid.
-    /// Used by `ProcessTapInput` to exclude its own process from the tap.
     static func processObject(for pid: pid_t) throws -> AudioObjectID {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
@@ -129,8 +146,7 @@ enum AudioProcessInfo {
         return output
     }
 
-    /// Every audio-registered process the system knows about (whether currently
-    /// producing audio or not).
+    /// Every audio-registered process the system knows about.
     static func allProcessObjects() throws -> [AudioObjectID] {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyProcessObjectList,
@@ -151,40 +167,93 @@ enum AudioProcessInfo {
         return ids
     }
 
-    // MARK: - UI-facing app list
+    // MARK: - EarTrumpet-style user-facing app list
 
-    /// Snapshot of currently-running audio-registered apps for the exclusion
-    /// window. Deduplicated by bundle ID (so Safari's many WebContent
-    /// processes collapse into one row), sorted by display name.
+    /// Internal macOS daemons and services that should never show up in the user volume mixer.
+    private static let blockedBundlePrefixes: [String] = [
+        "com.apple.accessibility",
+        "com.apple.assistant",
+        "com.apple.audiomxd",
+        "com.apple.cmio",
+        "com.apple.CoreSpeech",
+        "com.apple.mediaremote",
+        "com.apple.telephonyutilities",
+        "com.apple.PowerChime",
+        "com.apple.loginwindow",
+        "com.apple.controlcenter",
+        "com.apple.systemsoundserverd",
+        "com.apple.audio.coreaudiod",
+        "app.monitorcontrol"
+    ]
+
+    /// Snapshot of real, user-facing applications (e.g. Safari, Spotify, Chrome, Music).
     ///
-    /// anmolAudio itself is filtered out — there's no value in offering to exclude
-    /// the host process (and we already drop ourselves from the tap targets).
+    /// EarTrumpet-style filtering:
+    /// - Resolves helper processes (e.g. WebContent, Chrome renderers, Antigravity Helper) to the parent app.
+    /// - Drops system daemons, background agents, and internal OS audio plumbing.
+    /// - Regular GUI apps always show; background agents only appear if they are actively playing audio.
+    /// - Sorts actively playing apps to the top, followed by alphabetical order.
     static func runningAudioApps() -> [App] {
         let objects = (try? allProcessObjects()) ?? []
-        let ownObject = try? processObject(for: getpid())
-        var byBundleID: [String: App] = [:]
+        let ownPID = getpid()
+        var byBundleID: [String: (app: App, isPlaying: Bool)] = [:]
+
         for obj in objects {
-            if let ownObject, obj == ownObject { continue }
-            guard let bundleID = bundleID(for: obj) else { continue }
-            if byBundleID[bundleID] != nil { continue }
-            byBundleID[bundleID] = App(
-                bundleID: bundleID,
-                displayName: displayName(forBundleID: bundleID, processObject: obj)
-            )
+            guard let processPid = pid(for: obj) else { continue }
+            let ownerPid = responsiblePID(for: processPid)
+            if ownerPid == ownPID || processPid == ownPID { continue }
+
+            guard let running = NSRunningApplication(processIdentifier: ownerPid)
+                ?? NSRunningApplication(processIdentifier: processPid),
+                let bundleID = running.bundleIdentifier,
+                bundleID != Bundle.main.bundleIdentifier
+            else { continue }
+
+            if blockedBundlePrefixes.contains(where: { bundleID.lowercased().hasPrefix($0.lowercased()) }) {
+                continue
+            }
+
+            let playing = isRunningOutput(obj)
+
+            // Real app filter: Regular GUI apps always; accessory/background
+            // helpers only if they are actually producing audio right now.
+            guard running.activationPolicy == .regular || playing else {
+                continue
+            }
+
+            let name = running.localizedName ?? displayName(forBundleID: bundleID, processObject: obj)
+            if let existing = byBundleID[bundleID] {
+                let isNowPlaying = existing.isPlaying || playing
+                byBundleID[bundleID] = (
+                    app: App(bundleID: bundleID, displayName: name, isPlaying: isNowPlaying),
+                    isPlaying: isNowPlaying
+                )
+            } else {
+                byBundleID[bundleID] = (
+                    app: App(bundleID: bundleID, displayName: name, isPlaying: playing),
+                    isPlaying: playing
+                )
+            }
         }
-        return byBundleID.values.sorted {
-            $0.displayName.localizedCompare($1.displayName) == .orderedAscending
+
+        // Playing apps first, then alphabetical
+        return byBundleID.values.map(\.app).sorted {
+            if $0.isPlaying != $1.isPlaying {
+                return $0.isPlaying && !$1.isPlaying
+            }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
     }
 
-    /// Best-effort display name for a bundle ID. Prefer `NSRunningApplication`
-    /// (matches what the user sees in the Dock); fall back to the bundle
-    /// `CFBundleName` or the bundle ID itself for helper processes.
+    /// Best-effort display name for a bundle ID.
     static func displayName(forBundleID bundleID: String, processObject: AudioObjectID? = nil) -> String {
-        if let pid = processObject.flatMap({ pid(for: $0) }),
-           let app = NSRunningApplication(processIdentifier: pid),
-           let name = app.localizedName, !name.isEmpty {
-            return name
+        if let pid = processObject.flatMap({ pid(for: $0) }) {
+            let ownerPid = responsiblePID(for: pid)
+            if let app = NSRunningApplication(processIdentifier: ownerPid)
+                ?? NSRunningApplication(processIdentifier: pid),
+               let name = app.localizedName, !name.isEmpty {
+                return name
+            }
         }
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
            let name = app.localizedName, !name.isEmpty {
@@ -200,8 +269,7 @@ enum AudioProcessInfo {
         return bundleID
     }
 
-    /// Resolves a Finder icon for a bundle ID, looking first at any currently
-    /// running instance (cheaper) and falling back to LaunchServices' app URL.
+    /// Resolves a Finder icon for a bundle ID.
     static func icon(forBundleID bundleID: String) -> NSImage? {
         if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
            let icon = app.icon {
@@ -216,9 +284,7 @@ enum AudioProcessInfo {
 
 // MARK: - Process-list change listener
 
-/// Fires whenever the system's audio process-object list changes (apps start
-/// or stop registering with Core Audio). Used by the excluded-apps window
-/// to refresh its running-apps list live.
+/// Fires whenever the system's audio process-object list changes.
 final class AudioProcessListChangeListener {
     typealias Handler = () -> Void
 
