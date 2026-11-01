@@ -312,7 +312,9 @@ final class EQEngine: ObservableObject {
         // `isPlayingAudio` false rather than stuck at its pre-teardown value.
         isPlayingAudio = false
         lastSignalAt = .distantPast
-        try? tapInput.stop()
+        // Do NOT call tapInput.stop() here upfront — tapInput.prepare() performs
+        // a seamless overlapping handoff (creating new taps before destroying old taps)
+        // so Core Audio never un-mutes the apps to the DAC during rebuilds.
         // Snap the ring buffer's output gain to silence before the audio
         // chain starts producing samples. The fade-in below ramps from
         // 0 → 1; without this pre-mute, a cold start (currentGain == 1
@@ -434,6 +436,9 @@ final class EQEngine: ObservableObject {
         //    delay, FFT bin → Hz mapping) is correct relative to what was captured.
         if let preset = effectivePreset {
             eqProcessor.configure(preset: preset, sampleRate: tapSampleRate)
+        } else {
+            // Safety fallback: ensure preamp is clamped safely
+            eqProcessor.setPreamp(dB: 0.0)
         }
         spectrumAnalyzer.reset()
         spectrumAnalyzer.configure(sampleRate: tapSampleRate)

@@ -105,7 +105,12 @@ final class ProcessTapInput {
         excludedBundleIDs: Set<String> = [],
         appVolumes: [String: AppVolume] = [:]
     ) throws -> (deviceID: AudioDeviceID, sampleRate: Double) {
-        try teardownTapAndAggregate()
+        // Remember previous taps and aggregate so we can destroy them AFTER
+        // the new taps are created and active. Overlapping taps ensure Core Audio
+        // never un-mutes the apps to the DAC, preventing un-attenuated volume blasts.
+        let oldTapIDs = self.tapIDs
+        let oldDeviceID = self.deviceID
+        try stopIOProc()
 
         // 1. Look up our own audio process object so we can exclude ourselves from the
         //    tap targets — otherwise HALOutput's playback to the DAC would loop back
@@ -255,6 +260,10 @@ final class ProcessTapInput {
         let aggStatus = AudioHardwareCreateAggregateDevice(aggregateDescription as CFDictionary, &newAggregateID)
         if aggStatus != noErr {
             for t in newTapIDs { AudioHardwareDestroyProcessTap(t) }
+            for t in oldTapIDs { AudioHardwareDestroyProcessTap(t) }
+            if oldDeviceID != 0 { AudioHardwareDestroyAggregateDevice(oldDeviceID) }
+            self.tapIDs.removeAll()
+            self.deviceID = 0
             throw CoreAudioError.osStatus(aggStatus, "AudioHardwareCreateAggregateDevice")
         }
 
@@ -279,6 +288,20 @@ final class ProcessTapInput {
         self.deviceID = newAggregateID
         self.tappedProcessObjects = Set(validProcesses)
         self.tapBufferStartIndex = Self.inputBufferCount(of: mainSubDevice.id)
+
+        // Seamless handoff: teardown previous taps & aggregate now that the new taps are active.
+        if oldDeviceID != 0 {
+            let status = AudioHardwareDestroyAggregateDevice(oldDeviceID)
+            if status != noErr {
+                log.warning("AudioHardwareDestroyAggregateDevice(\(oldDeviceID)) returned \(status)")
+            }
+        }
+        for t in oldTapIDs {
+            let status = AudioHardwareDestroyProcessTap(t)
+            if status != noErr {
+                log.warning("AudioHardwareDestroyProcessTap(\(t)) returned \(status)")
+            }
+        }
 
         log.info("Process tap aggregate ready: \(newTapIDs.count) tap(s), aggregateID=\(newAggregateID), rate=\(sampleRate)")
         return (newAggregateID, sampleRate)

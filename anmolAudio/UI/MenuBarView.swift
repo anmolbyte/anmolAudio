@@ -219,6 +219,7 @@ struct MenuBarView: View {
         .onDisappear {
             stopMetering()
             hoveredAppBundleID = nil
+            processListListener = nil
         }
         .onChange(of: isAppVolumesExpanded) { _, expanded in
             if expanded {
@@ -914,6 +915,7 @@ struct MenuBarView: View {
         // they've seen it before.
         switch AudioCapturePermission.preflight() {
         case .authorized:
+            applySelectedPreset()
             engine.start(output: output)
         case .unknown:
             // OS is about to prompt — show the welcome copy first so the
@@ -925,6 +927,7 @@ struct MenuBarView: View {
             // show — ensureAuthorized() returns true silently if the OS
             // would actually permit the capture.
             if AudioCapturePermission.ensureAuthorized() {
+                applySelectedPreset()
                 engine.start(output: output)
             } else {
                 presentOnboarding()
@@ -958,14 +961,12 @@ struct MenuBarView: View {
         guard meterTimer == nil else { return }
         engine.setAppMeteringActive(true)
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak engine] _ in
-            Task { @MainActor [weak engine] in
-                guard let engine else { return }
-                var newPeaks: [String: Float] = [:]
-                for app in self.runningAudioApps {
-                    newPeaks[app.bundleID] = engine.appPeakLevel(for: app.bundleID)
-                }
-                self.peakLevels = newPeaks
+            guard let engine else { return }
+            var newPeaks: [String: Float] = [:]
+            for app in self.runningAudioApps {
+                newPeaks[app.bundleID] = engine.appPeakLevel(for: app.bundleID)
             }
+            self.peakLevels = newPeaks
         }
         RunLoop.main.add(timer, forMode: .common)
         self.meterTimer = timer
@@ -976,6 +977,7 @@ struct MenuBarView: View {
         meterTimer = nil
         engine.setAppMeteringActive(false)
         peakLevels.removeAll()
+        processListListener = nil
     }
 
 }

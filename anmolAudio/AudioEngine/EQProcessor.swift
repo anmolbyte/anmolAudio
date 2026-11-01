@@ -153,6 +153,13 @@ final class EQProcessor {
         pendingCoefficients = coefficients
         coefficientsDirty = true
         pendingPreampLinear = linear
+        // Atomically exit slot mode (comparison/bypass) if active so coefficients
+        // and preamp switch simultaneously with zero intermediate states
+        slotCoefficients = []
+        slotPreampsLinear = []
+        pendingActiveSlot = 0
+        appliedActiveSlot = -1
+        pendingMuteLinear = 1.0
         os_unfair_lock_unlock(&lock)
     }
 
