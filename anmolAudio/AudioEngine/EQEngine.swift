@@ -87,13 +87,68 @@ final class EQEngine: ObservableObject {
     weak var excludedAppsStore: ExcludedAppsStore?
     weak var outputPreferences: OutputSelectionPreferences?
     weak var appVolumeStore: AppVolumeStore?
+    weak var voipMonitor: VoIPMonitor?
+
+    private var lastEffectiveExcludedBundleIDs: Set<String> = []
 
     var effectiveExcludedBundleIDs: Set<String> {
         var set = excludedAppsStore?.excludedBundleIDs ?? []
-        if outputPreferences?.callHandlingMode == .bypassCallAudio {
-            set.formUnion(VoIPAppsStore.shared.voipBundleIDs)
+        guard let outputPreferences else { return set }
+
+        let activeUID = activeOutput?.uid ?? ""
+        let deviceBypassesCallAudio = outputPreferences.bypassCallAudioToDAC(for: activeUID)
+        
+        let activeMics = voipMonitor?.activeMicBundleIDs ?? []
+        let registeredVoip = VoIPAppsStore.shared.voipBundleIDs
+        let allCallApps = registeredVoip.union(activeMics)
+
+        // Dedicated macOS call audio daemons (no GUI, active during telephony)
+        let dedicatedCallDaemons: Set<String> = [
+            "com.apple.avconferenced",
+            "com.apple.telephonyutilities.callservicesd",
+            "com.apple.TelephonyUtilities"
+        ]
+        if deviceBypassesCallAudio {
+            set.formUnion(dedicatedCallDaemons)
+        }
+
+        for bid in allCallApps {
+            if dedicatedCallDaemons.contains(bid) { continue }
+            let policy = VoIPAppsStore.shared.callPolicy(for: bid)
+            let isActivelyUsingMic = activeMics.contains(bid)
+            
+            switch policy {
+            case .alwaysBypass:
+                // Dedicated call apps (Zoom, FaceTime) that should always bypass to DAC
+                set.insert(bid)
+            case .alwaysEQ:
+                // Forced to stay in EQ tap
+                break
+            case .inherit:
+                // Dynamic call detection: ONLY bypass when the app is actively on a call (using mic)
+                // AND the active device policy is set to bypass to DAC!
+                if isActivelyUsingMic && deviceBypassesCallAudio {
+                    set.insert(bid)
+                }
+            case .none:
+                // Dynamic fallback for any app not marked as a call app that opens a microphone:
+                if isActivelyUsingMic && deviceBypassesCallAudio {
+                    set.insert(bid)
+                }
+            }
         }
         return set
+    }
+
+    /// Evaluates if active call exclusions changed and rebuilds the tap if needed.
+    func handleCallAudioStateChanged() {
+        guard isRunning else { return }
+        let newExcluded = effectiveExcludedBundleIDs
+        if newExcluded != lastEffectiveExcludedBundleIDs {
+            log.info("Call audio exclusion set changed: \(newExcluded.count) apps bypassed. Rebuilding tap.")
+            lastEffectiveExcludedBundleIDs = newExcluded
+            reEnumerateTapTargets()
+        }
     }
 
     // Tap-side sample-rate listener. Fires on every tap-rate change (hi-res
@@ -349,6 +404,7 @@ final class EQEngine: ObservableObject {
         let tapSampleRate: Double
         do {
             let excludedBundleIDs = effectiveExcludedBundleIDs
+            lastEffectiveExcludedBundleIDs = excludedBundleIDs
             let volumes = appVolumeStore?.volumes ?? [:]
             let prepared = try tapInput.prepare(excludedBundleIDs: excludedBundleIDs, appVolumes: volumes)
             inputDeviceID = prepared.deviceID
@@ -435,7 +491,10 @@ final class EQEngine: ObservableObject {
         //    configured against the tap's native rate so their per-sample math (ITD
         //    delay, FFT bin → Hz mapping) is correct relative to what was captured.
         if let preset = effectivePreset {
-            eqProcessor.configure(preset: preset, sampleRate: tapSampleRate)
+            let activeUID = activeOutput?.uid ?? ""
+            let eqOn = outputPreferences?.enableEQ(for: activeUID) ?? true
+            let preampOn = outputPreferences?.enablePreamp(for: activeUID) ?? true
+            eqProcessor.configure(preset: preset, sampleRate: tapSampleRate, enableEQ: eqOn, enablePreamp: preampOn)
         } else {
             // Safety fallback: ensure preamp is clamped safely
             eqProcessor.setPreamp(dB: 0.0)
@@ -913,7 +972,10 @@ final class EQEngine: ObservableObject {
         log.info("Soft reconfig: tap \(self.activeSampleRate ?? 0) → \(newSR) Hz (halSR \(self.halSampleRate ?? 0) Hz)")
         activeSampleRate = newSR
         if let preset = effectivePreset {
-            eqProcessor.configure(preset: preset, sampleRate: newSR)
+            let activeUID = activeOutput?.uid ?? ""
+            let eqOn = outputPreferences?.enableEQ(for: activeUID) ?? true
+            let preampOn = outputPreferences?.enablePreamp(for: activeUID) ?? true
+            eqProcessor.configure(preset: preset, sampleRate: newSR, enableEQ: eqOn, enablePreamp: preampOn)
         }
         spectrumAnalyzer.configure(sampleRate: newSR)
         clipMeter.configure(sampleRate: newSR)
@@ -1049,7 +1111,19 @@ final class EQEngine: ObservableObject {
         // An apply landing mid-drag (preset switch from the menu bar) must
         // not be clobbered by the staged copy when the drag ends.
         if isLiveEditing { liveEditPreset = preset }
-        eqProcessor.configure(preset: preset, sampleRate: activeSampleRate ?? 48_000)
+        let activeUID = activeOutput?.uid ?? ""
+        let eqOn = outputPreferences?.enableEQ(for: activeUID) ?? true
+        let preampOn = outputPreferences?.enablePreamp(for: activeUID) ?? true
+        eqProcessor.configure(preset: preset, sampleRate: activeSampleRate ?? 48_000, enableEQ: eqOn, enablePreamp: preampOn)
+    }
+
+    /// Reconfigures DSP bands and preamp when per-device enableEQ or enablePreamp settings change.
+    func updateProcessingConfiguration() {
+        guard isRunning, let preset = effectivePreset else { return }
+        let activeUID = activeOutput?.uid ?? ""
+        let eqOn = outputPreferences?.enableEQ(for: activeUID) ?? true
+        let preampOn = outputPreferences?.enablePreamp(for: activeUID) ?? true
+        eqProcessor.configure(preset: preset, sampleRate: activeSampleRate ?? 48_000, enableEQ: eqOn, enablePreamp: preampOn)
     }
 
     func updateBand(index: Int, band: EQBand) {

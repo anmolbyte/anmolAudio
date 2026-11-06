@@ -43,17 +43,22 @@ final class EQProcessor {
     private var pendingMuteLinear: Float = 1.0
     private var muteLinear: Float = 1.0
 
+    static let identityFlatCoefficients: [Double] = {
+        var identity: [Double] = []
+        identity.reserveCapacity(5 * EQProcessor.sectionCount)
+        for _ in 0..<EQProcessor.sectionCount {
+            let c = BiquadCoefficients.identity
+            identity.append(contentsOf: [c.0, c.1, c.2, c.3, c.4])
+        }
+        return identity
+    }()
+
     private(set) var sampleRate: Double = 48_000
 
     init() {
         // Build initial passthrough cascades so the audio thread can run even before the
         // first configure() call lands.
-        var identityFlat: [Double] = []
-        identityFlat.reserveCapacity(5 * EQProcessor.sectionCount)
-        for _ in 0..<EQProcessor.sectionCount {
-            let c = BiquadCoefficients.identity
-            identityFlat.append(contentsOf: [c.0, c.1, c.2, c.3, c.4])
-        }
+        let identityFlat = Self.identityFlatCoefficients
         self.cascadeL = BiquadCascade(sectionCount: EQProcessor.sectionCount, initialCoefficients: identityFlat)
         self.cascadeR = BiquadCascade(sectionCount: EQProcessor.sectionCount, initialCoefficients: identityFlat)
         self.pendingCoefficients = identityFlat
@@ -63,10 +68,11 @@ final class EQProcessor {
 
     /// Configure all bands + preamp from a preset for the given sample rate. Coefficients
     /// are pushed atomically; the next audio callback will pick them up.
-    func configure(preset: EQPreset, sampleRate: Double) {
+    func configure(preset: EQPreset, sampleRate: Double, enableEQ: Bool = true, enablePreamp: Bool = true) {
         self.sampleRate = sampleRate
-        let flat = Self.flatCoefficients(for: preset, sampleRate: sampleRate)
-        publish(coefficients: flat, preampDB: preset.preamp)
+        let flat = enableEQ ? Self.flatCoefficients(for: preset, sampleRate: sampleRate) : Self.identityFlatCoefficients
+        let safePreamp = enablePreamp ? preset.preamp : 0.0
+        publish(coefficients: flat, preampDB: safePreamp)
     }
 
     /// Recompute a single band's coefficients and republish. Cheap; called on slider drag.
@@ -221,6 +227,19 @@ final class EQProcessor {
         // exited slot mode externally, unmute so we don't leave the user with
         // silence.
         pendingMuteLinear = 1.0
+        os_unfair_lock_unlock(&lock)
+    }
+
+    /// Dynamically update live preamp gain without touching active filter bands or recreating slots.
+    func updateLivePreamp(dB: Float) {
+        let safeDB = min(0.0, dB)
+        let linear = pow(10.0, safeDB / 20.0)
+        os_unfair_lock_lock(&lock)
+        pendingPreampLinear = linear
+        if !slotPreampsLinear.isEmpty {
+            // Also update slot B if slot mode is active
+            slotPreampsLinear[pendingActiveSlot] = linear
+        }
         os_unfair_lock_unlock(&lock)
     }
 

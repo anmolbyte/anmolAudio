@@ -50,8 +50,8 @@ struct SettingsView: View {
             .tabItem { Label("Sync", systemImage: "icloud") }
         }
         .frame(
-            minWidth: 640,
-            idealWidth: 660,
+            minWidth: 720,
+            idealWidth: 760,
             maxWidth: .infinity,
             minHeight: 460,
             idealHeight: defaultWindowHeight,

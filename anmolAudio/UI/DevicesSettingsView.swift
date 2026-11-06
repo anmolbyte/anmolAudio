@@ -66,7 +66,13 @@ struct DevicesSettingsView: View {
                                 Text("Behavior")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 130, alignment: .leading)
+                                    .frame(width: 120, alignment: .leading)
+                                Text("Config")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 32, alignment: .center)
+                                Color.clear
+                                    .frame(width: 20, height: 1)
                             }
                             .padding(.horizontal, 14)
                             .padding(.top, 4)
@@ -126,6 +132,7 @@ struct DevicesSettingsView: View {
                     Text(record.name)
                         .font(.body.weight(.medium))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.85)
                         .help(record.name)
 
                     if isCurrentlySelected {
@@ -147,20 +154,11 @@ struct DevicesSettingsView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    Text(record.transportType.displayName)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Text("•")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-
-                    Text("Seen \(record.lastSeen, style: .relative) ago")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Text(record.transportType.displayName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
+            .frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
 
             Spacer(minLength: 8)
 
@@ -216,19 +214,43 @@ struct DevicesSettingsView: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            .frame(width: 130)
+            .frame(width: 120)
 
-            if !isCurrentlySelected && !isConnected {
-                Button {
-                    outputPreferences.forgetDevice(uid: record.uid)
-                } label: {
+            DeviceCallConfigButton(
+                record: record,
+                outputPreferences: outputPreferences,
+                engine: engine
+            )
+            .frame(width: 32, alignment: .center)
+
+            // Fixed-width slot for the forget/remove button to keep all rows and columns aligned
+            Group {
+                if record.transportType == .builtIn {
+                    // Non-removable built-in hardware (MacBook speakers, internal jack) — blank space
+                    Color.clear
+                        .frame(width: 20, height: 20)
+                } else if isCurrentlySelected || isConnected {
+                    // Plugged-in external device — greyed out with tooltip
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 13))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Color.secondary.opacity(0.25))
+                        .frame(width: 20, height: 20)
+                        .help("Plugged in")
+                } else {
+                    // Disconnected device — clickable button to forget
+                    Button {
+                        outputPreferences.forgetDevice(uid: record.uid)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Forget \(record.name)")
                 }
-                .buttonStyle(.plain)
-                .help("Forget \(record.name)")
             }
+            .frame(width: 20, alignment: .center)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -255,5 +277,111 @@ struct DevicesSettingsView: View {
         }
         openWindow(id: "editor")
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+private struct DeviceCallConfigButton: View {
+    let record: OutputSelectionPreferences.KnownDeviceRecord
+    @ObservedObject var outputPreferences: OutputSelectionPreferences
+    @ObservedObject var engine: EQEngine
+    @State private var showPopover = false
+
+    var body: some View {
+        Button {
+            showPopover.toggle()
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 13))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Audio & call settings for \(record.name)")
+        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Settings: \(record.name)")
+                    .font(.headline)
+
+                // 1. Audio Processing (EQ & Preamp)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Audio Processing")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle("Enable EQ", isOn: Binding(
+                            get: { outputPreferences.enableEQ(for: record.uid) },
+                            set: {
+                                outputPreferences.setEnableEQ($0, for: record.uid)
+                                engine.updateProcessingConfiguration()
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+
+                        Text("Applies parametric EQ filter bands from the selected preset. Enabled by default.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle("Enable Preamp", isOn: Binding(
+                            get: { outputPreferences.enablePreamp(for: record.uid) },
+                            set: {
+                                outputPreferences.setEnablePreamp($0, for: record.uid)
+                                engine.updateProcessingConfiguration()
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+
+                        Text("Applies the preset's gain attenuation (prevents digital clipping). Enabled by default.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Divider()
+
+                // 2. Call & Ducking Rules
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Calls & Ducking")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle("AEC Ducking", isOn: Binding(
+                            get: { outputPreferences.aecDucking(for: record.uid) },
+                            set: {
+                                outputPreferences.setAECDucking($0, for: record.uid)
+                                engine.handleCallAudioStateChanged()
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+
+                        Text(outputPreferences.aecDucking(for: record.uid)
+                            ? "Enabled (in EQ) — Call audio passes through EQ tap. Safe on headphones where no acoustic feedback exists."
+                            : "Disabled (Bypass to DAC) — Call audio bypasses directly to hardware to prevent Apple's echo cancellation from ducking voice on speakers.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Toggle("Background Audio Ducking", isOn: Binding(
+                            get: { outputPreferences.backgroundAudioDucking(for: record.uid) },
+                            set: { outputPreferences.setBackgroundAudioDucking($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+
+                        Text("macOS dims background apps (Spotify, YouTube) by -12 dB when your microphone is open. Uncheck to disable ducking.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(width: 330)
+        }
     }
 }

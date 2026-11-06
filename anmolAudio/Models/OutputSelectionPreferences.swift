@@ -95,6 +95,12 @@ final class OutputSelectionPreferences: ObservableObject {
         var transportType: AudioDeviceTransportType
         var lastSeen: Date
         var policy: DevicePolicy
+        var aecDucking: Bool?
+        var backgroundAudioDucking: Bool?
+        var enablePreamp: Bool?
+        var enableEQ: Bool?
+        var bypassCallAudioToDAC: Bool?
+        var disableSystemDucking: Bool?
     }
 
     static let lastOutputUIDKey = "anmolAudio.lastOutputDeviceUID"
@@ -260,6 +266,106 @@ final class OutputSelectionPreferences: ObservableObject {
             list[idx].policy = policy
             self.knownDevices = list
         }
+    }
+
+    // MARK: - Per-Device Audio & Call Options
+
+    static func defaultAECDucking(for transportType: AudioDeviceTransportType, name: String) -> Bool {
+        let n = name.lowercased()
+        if n.contains("headphone") || n.contains("earphone") || n.contains("airpod") || n.contains("etymotic") || n.contains("iem") {
+            // Headphones have no acoustic feedback loop -> keep in tap (AEC ducking not triggered)
+            return true
+        }
+        if transportType == .bluetooth {
+            return true
+        }
+        // Built-in speakers, external speakers, displays, and general docks have acoustic feedback risk
+        // -> AEC ducking is disabled by default (calls bypass to DAC)
+        return false
+    }
+
+    func aecDucking(for uid: String) -> Bool {
+        if let rec = knownDevices.first(where: { $0.uid == uid }) {
+            if let explicit = rec.aecDucking {
+                return explicit
+            }
+            if let legacyBypass = rec.bypassCallAudioToDAC {
+                return !legacyBypass
+            }
+            return Self.defaultAECDucking(for: rec.transportType, name: rec.name)
+        }
+        return false
+    }
+
+    func setAECDucking(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].aecDucking = value
+            list[idx].bypassCallAudioToDAC = !value
+            self.knownDevices = list
+        }
+    }
+
+    func backgroundAudioDucking(for uid: String) -> Bool {
+        if let rec = knownDevices.first(where: { $0.uid == uid }) {
+            if let explicit = rec.backgroundAudioDucking {
+                return explicit
+            }
+            if let legacyDisable = rec.disableSystemDucking {
+                return !legacyDisable
+            }
+        }
+        return true // Standard macOS communication ducking is active by default
+    }
+
+    func setBackgroundAudioDucking(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].backgroundAudioDucking = value
+            list[idx].disableSystemDucking = !value
+            self.knownDevices = list
+        }
+    }
+
+    func enablePreamp(for uid: String) -> Bool {
+        knownDevices.first(where: { $0.uid == uid })?.enablePreamp ?? true
+    }
+
+    func setEnablePreamp(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].enablePreamp = value
+            self.knownDevices = list
+        }
+    }
+
+    func enableEQ(for uid: String) -> Bool {
+        knownDevices.first(where: { $0.uid == uid })?.enableEQ ?? true
+    }
+
+    func setEnableEQ(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].enableEQ = value
+            self.knownDevices = list
+        }
+    }
+
+    // Legacy compatibility bridges
+    func bypassCallAudioToDAC(for uid: String) -> Bool {
+        !aecDucking(for: uid)
+    }
+
+    func setBypassCallAudioToDAC(_ value: Bool, for uid: String) {
+        setAECDucking(!value, for: uid)
+    }
+
+    func disableSystemDucking(for uid: String) -> Bool {
+        !backgroundAudioDucking(for: uid)
+    }
+
+    func setDisableSystemDucking(_ value: Bool, for uid: String) {
+        setBackgroundAudioDucking(!value, for: uid)
     }
 
     /// Evaluates the effective policy for an audio device, accounting for the global

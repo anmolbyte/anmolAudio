@@ -47,7 +47,8 @@ struct anmolAudioApp: App {
                 burnInTracker: burnInTracker,
                 outputVolumeMonitor: outputVolumeMonitor,
                 excludedAppsStore: excludedAppsStore,
-                appVolumeStore: appVolumeStore
+                appVolumeStore: appVolumeStore,
+                voipMonitor: voipMonitor
             )
         }
         .menuBarExtraStyle(.window)
@@ -76,6 +77,9 @@ struct anmolAudioApp: App {
                     }
                 }
             }
+        }
+        .onChange(of: voipMonitor.activeMicBundleIDs, initial: false) { _, _ in
+            engine.handleCallAudioStateChanged()
         }
         // Global ⌘, command so Settings opens regardless of which window is
         // key — including when the menu bar popover is closed.
@@ -277,6 +281,7 @@ private struct MenuBarLabel: View {
     @ObservedObject var outputVolumeMonitor: OutputVolumeMonitor
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
     @ObservedObject var appVolumeStore: AppVolumeStore
+    @ObservedObject var voipMonitor: VoIPMonitor
 
     @Environment(\.openWindow) private var openWindow
 
@@ -314,15 +319,19 @@ private struct MenuBarLabel: View {
                 guard !didRunLaunchCoordinator else { return }
                 didRunLaunchCoordinator = true
 
-                // Seed the persistent engine with output preferences, excluded apps, and app volumes
+                // Seed the persistent engine with output preferences, excluded apps, app volumes, and voip monitor
                 engine.outputPreferences = outputPreferences
                 engine.excludedAppsStore = excludedAppsStore
                 engine.appVolumeStore = appVolumeStore
+                engine.voipMonitor = voipMonitor
+                voipMonitor.onActiveMicChange = { [weak e = engine] _ in
+                    e?.handleCallAudioStateChanged()
+                }
                 excludedAppsStore.onChange = { [weak e = engine] in
                     e?.reEnumerateTapTargets()
                 }
                 VoIPAppsStore.shared.onChange = { [weak e = engine] in
-                    e?.reEnumerateTapTargets()
+                    e?.handleCallAudioStateChanged()
                 }
                 appVolumeStore.onConfigurationChange = { [weak e = engine] in
                     e?.reEnumerateTapTargets()

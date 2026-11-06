@@ -127,17 +127,17 @@ struct UnifiedAppsView: View {
                             Text("Volume")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 190, alignment: .leading)
+                                .frame(width: 155, alignment: .leading)
                             Text("Bypass EQ")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 80, alignment: .center)
+                                .frame(width: 60, alignment: .center)
                                 .help("This app's audio completely bypasses EQ and plays directly to macOS")
-                            Text("Call App")
+                            Text("Call Policy")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 80, alignment: .center)
-                                .help("Monitored for microphone activity to trigger call audio handling")
+                                .frame(width: 120, alignment: .leading)
+                                .help("Policy when this app is in an active audio/video call")
                         }
                         .padding(.horizontal, 10)
                         .padding(.top, 4)
@@ -148,7 +148,7 @@ struct UnifiedAppsView: View {
                                 AppRowView(
                                     row: row,
                                     isBypassed: excludedAppsStore.contains(row.bundleID),
-                                    isCallApp: voipAppsStore.contains(row.bundleID),
+                                    callPolicy: voipAppsStore.callPolicy(for: row.bundleID),
                                     volume: appVolumeStore.volume(for: row.bundleID),
                                     isMuted: appVolumeStore.isMuted(for: row.bundleID),
                                     onVolumeChange: { newVol in
@@ -160,8 +160,8 @@ struct UnifiedAppsView: View {
                                     onToggleBypass: {
                                         excludedAppsStore.toggle(row.bundleID)
                                     },
-                                    onToggleCallApp: {
-                                        voipAppsStore.toggle(row.bundleID)
+                                    onCallPolicyChange: { newPolicy in
+                                        voipAppsStore.setCallPolicy(newPolicy, for: row.bundleID)
                                     }
                                 )
                             }
@@ -272,13 +272,13 @@ struct UnifiedAppsView: View {
 private struct AppRowView: View {
     let row: UnifiedAppsView.Row
     let isBypassed: Bool
-    let isCallApp: Bool
+    let callPolicy: AppCallPolicy
     let volume: Float
     let isMuted: Bool
     let onVolumeChange: (Float) -> Void
     let onToggleMute: () -> Void
     let onToggleBypass: () -> Void
-    let onToggleCallApp: () -> Void
+    let onCallPolicyChange: (AppCallPolicy) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -287,34 +287,37 @@ private struct AppRowView: View {
                 .frame(width: 24, height: 24)
 
             VStack(alignment: .leading, spacing: 2) {
+                Text(row.displayName)
+                    .font(.body)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
                 HStack(spacing: 6) {
-                    Text(row.displayName)
-                        .font(.body)
+                    Text(row.bundleID)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
 
                     if !row.isRunning {
-                        Text("not running")
-                            .font(.caption2)
+                        Text("• not running")
+                            .font(.system(size: 9))
                             .foregroundStyle(.tertiary)
+                            .lineLimit(1)
                     }
                 }
-
-                Text(row.bundleID)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
             }
+            .frame(minWidth: 150, maxWidth: .infinity, alignment: .leading)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             // Volume controls
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 Button {
                     onToggleMute()
                 } label: {
                     Image(systemName: isMuted ? "speaker.slash.fill" : (volume == 0 ? "speaker.fill" : "speaker.wave.2.fill"))
                         .foregroundStyle(isMuted ? .red : (isBypassed ? .secondary : .primary))
-                        .frame(width: 18)
+                        .frame(width: 16)
                 }
                 .buttonStyle(.plain)
                 .disabled(isBypassed)
@@ -324,15 +327,15 @@ private struct AppRowView: View {
                     get: { Double(volume) },
                     set: { onVolumeChange(Float($0)) }
                 ), in: 0...1.5)
-                .frame(width: 110)
+                .frame(width: 90)
                 .disabled(isBypassed)
 
                 Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(isMuted ? .red : .secondary)
-                    .frame(width: 44, alignment: .trailing)
+                    .frame(width: 38, alignment: .trailing)
             }
-            .frame(width: 190)
+            .frame(width: 155)
 
             Toggle("", isOn: Binding(
                 get: { isBypassed },
@@ -340,15 +343,36 @@ private struct AppRowView: View {
             ))
             .labelsHidden()
             .toggleStyle(.checkbox)
-            .frame(width: 80, alignment: .center)
+            .frame(width: 60, alignment: .center)
 
-            Toggle("", isOn: Binding(
-                get: { isCallApp },
-                set: { _ in onToggleCallApp() }
-            ))
-            .labelsHidden()
-            .toggleStyle(.checkbox)
-            .frame(width: 80, alignment: .center)
+            Menu {
+                ForEach(AppCallPolicy.allCases) { policy in
+                    Button {
+                        onCallPolicyChange(policy)
+                    } label: {
+                        HStack {
+                            Label(policy.title, systemImage: policy.iconName)
+                            if policy == callPolicy {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: callPolicy.iconName)
+                        .font(.caption2)
+                        .foregroundStyle(callPolicy == .none ? Color.secondary : Color.accentColor)
+                    Text(callPolicy.shortTitle)
+                        .font(.caption)
+                        .lineLimit(1)
+                }
+                .frame(width: 110, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 120, alignment: .leading)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
