@@ -131,10 +131,34 @@ private struct GeneralSettingsTab: View {
                     Divider()
 
                     VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Auto-pause media on device change", isOn: $outputPreferences.autoPauseOnDeviceChange)
+                            .toggleStyle(.checkbox)
+                            .help("Automatically pauses media playback whenever the audio output destination changes or disconnects")
+                        Text("Pauses media players (Spotify, Apple Music, YouTube in browsers) when headphones disconnect or audio switches, preventing audio from playing unexpectedly.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
                         Toggle("Auto-mute on device change", isOn: $outputPreferences.autoMuteOnDeviceChange)
                             .toggleStyle(.checkbox)
                             .help("Mutes the new audio output device when the playback destination changes or disconnects")
                         Text("Prevents audio from accidentally blasting through MacBook speakers when headphones are unplugged or Bluetooth disconnects.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle("Safe volume on connect (30% cap)", isOn: $outputPreferences.safeVolumeOnConnect)
+                            .toggleStyle(.checkbox)
+                            .help("Caps initial volume to a safe 30% level when audio devices or headphones connect")
+                        Text("Protects hearing and sensitive IEMs from sudden ear-bleed volume blasts if headphones were left loud or Bluetooth reconnects at 100%.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

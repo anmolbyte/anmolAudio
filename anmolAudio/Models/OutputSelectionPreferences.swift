@@ -132,6 +132,11 @@ final class OutputSelectionPreferences: ObservableObject {
         var isChannelSwap: Bool?
         var autoLockBalance: Bool?
         var pan: Float?
+        var lastVolume: Float?
+        var rememberVolume: Bool?
+        var safeVolumeOnConnect: Bool?
+        var enforceVolumeLimit: Bool?
+        var maxVolumeLimit: Float?
     }
 
     static let lastOutputUIDKey = "anmolAudio.lastOutputDeviceUID"
@@ -141,6 +146,8 @@ final class OutputSelectionPreferences: ObservableObject {
     static let knownDevicesKey = "anmolAudio.knownDevices"
     static let autoLockBalanceKey = "anmolAudio.autoLockBalance"
     static let autoMuteOnDeviceChangeKey = "anmolAudio.autoMuteOnDeviceChange"
+    static let autoPauseOnDeviceChangeKey = "anmolAudio.autoPauseOnDeviceChange"
+    static let safeVolumeOnConnectKey = "anmolAudio.safeVolumeOnConnect"
     static let pauseMusicOnCallKey = "anmolAudio.pauseMusicOnCall"
     static let resumeMusicAfterCallKey = "anmolAudio.resumeMusicAfterCall"
     static let callPauseBehaviorKey = "anmolAudio.callPauseBehavior"
@@ -155,6 +162,18 @@ final class OutputSelectionPreferences: ObservableObject {
     @Published var autoMuteOnDeviceChange: Bool {
         didSet {
             defaults.set(autoMuteOnDeviceChange, forKey: Self.autoMuteOnDeviceChangeKey)
+        }
+    }
+
+    @Published var autoPauseOnDeviceChange: Bool {
+        didSet {
+            defaults.set(autoPauseOnDeviceChange, forKey: Self.autoPauseOnDeviceChangeKey)
+        }
+    }
+
+    @Published var safeVolumeOnConnect: Bool {
+        didSet {
+            defaults.set(safeVolumeOnConnect, forKey: Self.safeVolumeOnConnectKey)
         }
     }
 
@@ -179,6 +198,16 @@ final class OutputSelectionPreferences: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.autoMuteOnDeviceChange = defaults.bool(forKey: Self.autoMuteOnDeviceChangeKey)
+        if defaults.object(forKey: Self.autoPauseOnDeviceChangeKey) == nil {
+            self.autoPauseOnDeviceChange = true
+        } else {
+            self.autoPauseOnDeviceChange = defaults.bool(forKey: Self.autoPauseOnDeviceChangeKey)
+        }
+        if defaults.object(forKey: Self.safeVolumeOnConnectKey) == nil {
+            self.safeVolumeOnConnect = true
+        } else {
+            self.safeVolumeOnConnect = defaults.bool(forKey: Self.safeVolumeOnConnectKey)
+        }
         self.pauseMusicOnCall = defaults.bool(forKey: Self.pauseMusicOnCallKey)
         if defaults.object(forKey: Self.resumeMusicAfterCallKey) == nil {
             self.resumeMusicAfterCall = true
@@ -328,7 +357,11 @@ final class OutputSelectionPreferences: ObservableObject {
                     lastSeen: now,
                     policy: initialPolicy,
                     autoLockBalance: true,
-                    pan: 0.0
+                    pan: 0.0,
+                    rememberVolume: true,
+                    safeVolumeOnConnect: true,
+                    enforceVolumeLimit: false,
+                    maxVolumeLimit: 0.60
                 ))
                 changed = true
             }
@@ -533,6 +566,69 @@ final class OutputSelectionPreferences: ObservableObject {
         var list = knownDevices
         if let idx = list.firstIndex(where: { $0.uid == uid }) {
             list[idx].pan = max(-1.0, min(1.0, value))
+            self.knownDevices = list
+        }
+    }
+
+    func lastVolume(for uid: String) -> Float? {
+        knownDevices.first(where: { $0.uid == uid })?.lastVolume
+    }
+
+    func setLastVolume(_ value: Float, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].lastVolume = max(0.0, min(1.0, value))
+            self.knownDevices = list
+        }
+    }
+
+    func rememberVolume(for uid: String) -> Bool {
+        knownDevices.first(where: { $0.uid == uid })?.rememberVolume ?? true
+    }
+
+    func setRememberVolume(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].rememberVolume = value
+            self.knownDevices = list
+        }
+    }
+
+    func safeVolumeOnConnect(for uid: String) -> Bool {
+        if let explicit = knownDevices.first(where: { $0.uid == uid })?.safeVolumeOnConnect {
+            return explicit
+        }
+        return self.safeVolumeOnConnect
+    }
+
+    func setSafeVolumeOnConnect(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].safeVolumeOnConnect = value
+            self.knownDevices = list
+        }
+    }
+
+    func enforceVolumeLimit(for uid: String) -> Bool {
+        knownDevices.first(where: { $0.uid == uid })?.enforceVolumeLimit ?? false
+    }
+
+    func setEnforceVolumeLimit(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].enforceVolumeLimit = value
+            self.knownDevices = list
+        }
+    }
+
+    func maxVolumeLimit(for uid: String) -> Float {
+        knownDevices.first(where: { $0.uid == uid })?.maxVolumeLimit ?? 0.60
+    }
+
+    func setMaxVolumeLimit(_ value: Float, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].maxVolumeLimit = max(0.10, min(1.0, value))
             self.knownDevices = list
         }
     }

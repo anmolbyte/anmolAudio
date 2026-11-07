@@ -39,6 +39,12 @@ final class MediaRemoteController {
         sendPause()
     }
 
+    /// Pauses any active media playback across macOS on device change or manual request.
+    func pauseMedia() {
+        log.info("Pausing media playback")
+        sendPause()
+    }
+
     /// Resumes media playback if anmolAudio paused it for a call.
     func resumeAfterCall() {
         guard didPauseForCall else { return }

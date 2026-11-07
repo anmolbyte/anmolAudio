@@ -17,7 +17,7 @@ struct anmolAudioApp: App {
     @StateObject private var excludedAppsStore = ExcludedAppsStore()
     @StateObject private var devicePresetMemory = DevicePresetMemory()
     @StateObject private var burnInTracker = BurnInTracker()
-    @StateObject private var outputVolumeMonitor = OutputVolumeMonitor()
+    @StateObject private var outputVolumeMonitor: OutputVolumeMonitor
     @StateObject private var balanceLockManager: BalanceLockManager
     @StateObject private var voipMonitor = VoIPMonitor()
     @StateObject private var appVolumeStore = AppVolumeStore()
@@ -206,6 +206,7 @@ struct anmolAudioApp: App {
         _outputPreferences = StateObject(wrappedValue: prefs)
         _deviceManager = StateObject(wrappedValue: DeviceManager(preferences: prefs))
         _balanceLockManager = StateObject(wrappedValue: BalanceLockManager(preferences: prefs))
+        _outputVolumeMonitor = StateObject(wrappedValue: OutputVolumeMonitor(preferences: prefs))
         // PresetStore needs the sync settings at init time so it can pick the
         // right backing location (local vs iCloud) before its first read. We
         // construct both eagerly here and share the same instance.
@@ -402,7 +403,12 @@ private struct MenuBarLabel: View {
                 runLaunchCoordinator()
             }
             .onChange(of: deviceManager.selectedOutput) { oldOut, newOut in
-                if let old = oldOut, let new = newOut, old.uid != new.uid {
+                let isSwitch = (oldOut?.uid != newOut?.uid)
+                if let old = oldOut, let new = newOut, isSwitch {
+                    if outputPreferences.autoPauseOnDeviceChange {
+                        launchLog.info("Auto-pausing media playback on device change (\(old.name) -> \(new.name))")
+                        MediaRemoteController.shared.pauseMedia()
+                    }
                     if outputPreferences.autoMuteOnDeviceChange {
                         launchLog.info("Auto-muting device \(new.name) on device change")
                         CoreAudioVolume.setMuted(true, for: new.id)
@@ -413,7 +419,7 @@ private struct MenuBarLabel: View {
                     }
                 }
                 // Re-point the volume monitor and balance lock at the new device so listeners track the right output.
-                outputVolumeMonitor.rebind(to: newOut)
+                outputVolumeMonitor.rebind(to: newOut, isDeviceSwitch: isSwitch)
                 balanceLockManager.rebind(to: newOut)
                 engine.updateChannelRouting()
                 // Three cases:

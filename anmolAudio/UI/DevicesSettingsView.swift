@@ -520,6 +520,88 @@ private struct DeviceCallConfigButton: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
+
+                        Divider()
+
+                        // 4. Volume & Hearing Safety
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Volume & Hearing Safety")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+
+                            // 4a. Remember volume
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Remember volume for this device", isOn: Binding(
+                                    get: { outputPreferences.rememberVolume(for: record.uid) },
+                                    set: { outputPreferences.setRememberVolume($0, for: record.uid) }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                if let last = outputPreferences.lastVolume(for: record.uid) {
+                                    Text("Restores output volume level for this device (last saved: \(Int(round(last * 100)))%).")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Text("Restores output volume level independently for this device.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+
+                            // 4b. Safe volume on connect
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Safe volume on connect (30% cap)", isOn: Binding(
+                                    get: { outputPreferences.safeVolumeOnConnect(for: record.uid) },
+                                    set: { outputPreferences.setSafeVolumeOnConnect($0, for: record.uid) }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text("Caps initial volume to 30% if louder on connect, preventing ear-bleed blasts when plugging in sensitive IEMs.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            // 4c. Volume Limit Ceiling
+                            VStack(alignment: .leading, spacing: 4) {
+                                Toggle("Enforce maximum volume limit", isOn: Binding(
+                                    get: { outputPreferences.enforceVolumeLimit(for: record.uid) },
+                                    set: { outputPreferences.setEnforceVolumeLimit($0, for: record.uid) }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                if outputPreferences.enforceVolumeLimit(for: record.uid) {
+                                    let maxLimit = outputPreferences.maxVolumeLimit(for: record.uid)
+                                    HStack {
+                                        Text("Volume Ceiling")
+                                            .font(.caption)
+                                        Spacer()
+                                        Text("\(Int(round(maxLimit * 100)))%")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.leading, 18)
+
+                                    Slider(
+                                        value: Binding(
+                                            get: { Double(outputPreferences.maxVolumeLimit(for: record.uid)) },
+                                            set: { outputPreferences.setMaxVolumeLimit(Float($0), for: record.uid) }
+                                        ),
+                                        in: 0.15...1.0,
+                                        step: 0.05
+                                    )
+                                    .padding(.leading, 18)
+
+                                    Text("Volume keys and apps cannot push volume past this ceiling. Protects ears and IEM drivers.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.leading, 18)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
                     }
                 }
                 .padding(16)

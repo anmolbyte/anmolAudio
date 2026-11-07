@@ -405,6 +405,52 @@ enum CoreAudioVolume {
         return status == noErr
     }
 
+    /// Sets the output device volume scalar (0.0 ... 1.0). Returns true if successfully set.
+    @discardableResult
+    static func setScalar(_ scalar: Float, for id: AudioDeviceID) -> Bool {
+        let clamped = max(0.0, min(1.0, Float32(scalar)))
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectHasProperty(id, &addr) {
+            var isSettable: DarwinBoolean = false
+            if AudioObjectIsPropertySettable(id, &addr, &isSettable) == noErr, isSettable.boolValue {
+                var val = clamped
+                let size = UInt32(MemoryLayout<Float32>.size)
+                if AudioObjectSetPropertyData(id, &addr, 0, nil, size, &val) == noErr {
+                    return true
+                }
+            }
+        }
+        // Fall back to per-channel elements 1 and 2
+        var e1Addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: 1
+        )
+        var e2Addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: 2
+        )
+        var success = false
+        var val = clamped
+        let size = UInt32(MemoryLayout<Float32>.size)
+        if AudioObjectHasProperty(id, &e1Addr) {
+            if AudioObjectSetPropertyData(id, &e1Addr, 0, nil, size, &val) == noErr {
+                success = true
+            }
+        }
+        if AudioObjectHasProperty(id, &e2Addr) {
+            if AudioObjectSetPropertyData(id, &e2Addr, 0, nil, size, &val) == noErr {
+                success = true
+            }
+        }
+        return success
+    }
+
     private static func channelScalar(for id: AudioDeviceID, element: AudioObjectPropertyElement) -> Float? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyVolumeScalar,
