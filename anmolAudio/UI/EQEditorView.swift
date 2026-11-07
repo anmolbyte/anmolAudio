@@ -1814,7 +1814,7 @@ private struct BandBadge: View {
 /// Each zone spans the same multiplicative range (20 Hz × 10^(i/10)), so the
 /// strip layout below the curve roughly tracks the curve's log-x axis.
 enum SlotMath {
-    static let count = 10
+    static let count = 12
     static let minFreq: Double = 20
     static let maxFreq: Double = 20_000
 
