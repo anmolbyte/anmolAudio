@@ -59,39 +59,30 @@ final class MediaRemoteController {
     }
 
     private func sendPause() {
-        // 1. Send system-wide Now Playing pause command
+        // 1. Send system-wide Now Playing pause command (native macOS media key pause)
         if let sendCommand = sendCommandFunc {
             _ = sendCommand(kMRPause, nil)
         }
 
-        // 2. Direct pause for Spotify or Apple Music if running
-        pauseAppIfRunning("com.spotify.client", appName: "Spotify")
-        pauseAppIfRunning("com.apple.Music", appName: "Music")
+        // 2. Direct pause for Spotify or Apple Music asynchronously to avoid blocking UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.pauseAppIfRunning("com.spotify.client", appName: "Spotify")
+            self?.pauseAppIfRunning("com.apple.Music", appName: "Music")
+        }
     }
 
     private func sendResume() {
-        // 1. Send system-wide Now Playing play command
+        // Send system-wide Now Playing play command. This cleanly resumes the
+        // application that was actively playing beforehand without blasting audio
+        // across multiple apps simultaneously.
         if let sendCommand = sendCommandFunc {
             _ = sendCommand(kMRPlay, nil)
         }
-
-        // 2. Direct play for Spotify or Apple Music if running
-        playAppIfRunning("com.spotify.client", appName: "Spotify")
-        playAppIfRunning("com.apple.Music", appName: "Music")
     }
 
     private func pauseAppIfRunning(_ bundleID: String, appName: String) {
         guard NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first != nil else { return }
         let script = "tell application \"\(appName)\" to pause"
-        if let appleScript = NSAppleScript(source: script) {
-            var err: NSDictionary?
-            appleScript.executeAndReturnError(&err)
-        }
-    }
-
-    private func playAppIfRunning(_ bundleID: String, appName: String) {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first != nil else { return }
-        let script = "tell application \"\(appName)\" to play"
         if let appleScript = NSAppleScript(source: script) {
             var err: NSDictionary?
             appleScript.executeAndReturnError(&err)

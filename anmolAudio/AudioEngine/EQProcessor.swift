@@ -57,6 +57,7 @@ final class EQProcessor {
     private var crossfeedStrength: Float = 0.50
     private var crossfeedStateL: Float = 0.0
     private var crossfeedStateR: Float = 0.0
+    private var cachedCrossfeedAlpha: Float = 0.0874
 
     static let identityFlatCoefficients: [Double] = {
         var identity: [Double] = []
@@ -93,6 +94,8 @@ final class EQProcessor {
     /// are pushed atomically; the next audio callback will pick them up.
     func configure(preset: EQPreset, sampleRate: Double, enableEQ: Bool = true, enablePreamp: Bool = true) {
         self.sampleRate = sampleRate
+        let fc: Float = 700.0
+        cachedCrossfeedAlpha = 1.0 - exp(-2.0 * .pi * fc / Float(sampleRate))
         let flat = enableEQ ? Self.flatCoefficients(for: preset, sampleRate: sampleRate) : Self.identityFlatCoefficients
         let safePreamp = enablePreamp ? preset.preamp : 0.0
         publish(coefficients: flat, preampDB: safePreamp)
@@ -225,8 +228,7 @@ final class EQProcessor {
                     }
                 }
                 if isCrossfeed && !isMono && crossfeedStrength > 0.001 {
-                    let fc: Float = 700.0
-                    let alpha: Float = 1.0 - exp(-2.0 * .pi * fc / Float(sampleRate))
+                    let alpha = cachedCrossfeedAlpha
                     let k: Float = crossfeedStrength * 0.35
                     let directGain: Float = 1.0 - k
                     var stateL = crossfeedStateL
@@ -261,6 +263,8 @@ final class EQProcessor {
                 if consecutiveSilentBlocks == silentHangoverBlocks {
                     cascadeL.reset()
                     cascadeR.reset()
+                    crossfeedStateL = 0.0
+                    crossfeedStateR = 0.0
                 }
             } else {
                 // Steady-state silence: input is 0 and delay lines are 0.
@@ -285,8 +289,7 @@ final class EQProcessor {
                 }
             }
             if isCrossfeed && !isMono && crossfeedStrength > 0.001 {
-                let fc: Float = 700.0
-                let alpha: Float = 1.0 - exp(-2.0 * .pi * fc / Float(sampleRate))
+                let alpha = cachedCrossfeedAlpha
                 let k: Float = crossfeedStrength * 0.35
                 let directGain: Float = 1.0 - k
                 var stateL = crossfeedStateL
@@ -375,6 +378,8 @@ final class EQProcessor {
         extraGainDBA: Float, extraGainDBB: Float
     ) {
         self.sampleRate = sampleRate
+        let fc: Float = 700.0
+        cachedCrossfeedAlpha = 1.0 - exp(-2.0 * .pi * fc / Float(sampleRate))
         let coeffA = Self.flatCoefficients(for: presetA, sampleRate: sampleRate)
         let coeffB = Self.flatCoefficients(for: presetB, sampleRate: sampleRate)
         let safePreampA = min(0.0, presetA.preamp + extraGainDBA)

@@ -161,6 +161,19 @@ final class OutputSelectionPreferences: ObservableObject {
 
     private let defaults: UserDefaults
 
+    @Published var knownDevices: [KnownDeviceRecord] {
+        didSet {
+            let clean = knownDevices.filter { record in
+                !record.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+                !record.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+                !record.name.contains("System Tap")
+            }
+            if let encoded = try? JSONEncoder().encode(clean) {
+                defaults.set(encoded, forKey: Self.knownDevicesKey)
+            }
+        }
+    }
+
     @Published var autoMuteOnDeviceChange: Bool {
         didSet {
             defaults.set(autoMuteOnDeviceChange, forKey: Self.autoMuteOnDeviceChangeKey)
@@ -199,6 +212,18 @@ final class OutputSelectionPreferences: ObservableObject {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        if let data = defaults.data(forKey: Self.knownDevicesKey),
+           let decoded = try? JSONDecoder().decode([KnownDeviceRecord].self, from: data) {
+            self.knownDevices = decoded
+                .filter { record in
+                    !record.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+                    !record.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+                    !record.name.contains("System Tap")
+                }
+                .sorted { $0.lastSeen > $1.lastSeen }
+        } else {
+            self.knownDevices = []
+        }
         self.autoMuteOnDeviceChange = defaults.bool(forKey: Self.autoMuteOnDeviceChangeKey)
         if defaults.object(forKey: Self.autoPauseOnDeviceChangeKey) == nil {
             self.autoPauseOnDeviceChange = true
@@ -226,8 +251,14 @@ final class OutputSelectionPreferences: ObservableObject {
     }
 
     private func purgePrivateAggregateRecords() {
-        let current = knownDevices
-        self.knownDevices = current
+        let clean = knownDevices.filter { record in
+            !record.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+            !record.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+            !record.name.contains("System Tap")
+        }
+        if clean.count != knownDevices.count {
+            self.knownDevices = clean
+        }
     }
 
     var lastOutputUID: String? {
@@ -294,33 +325,6 @@ final class OutputSelectionPreferences: ObservableObject {
     }
 
     // MARK: - Known Devices & Policy Management
-
-    var knownDevices: [KnownDeviceRecord] {
-        get {
-            guard let data = defaults.data(forKey: Self.knownDevicesKey),
-                  let decoded = try? JSONDecoder().decode([KnownDeviceRecord].self, from: data) else {
-                return []
-            }
-            return decoded
-                .filter { record in
-                    !record.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
-                    !record.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
-                    !record.name.contains("System Tap")
-                }
-                .sorted { $0.lastSeen > $1.lastSeen }
-        }
-        set {
-            let clean = newValue.filter { record in
-                !record.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
-                !record.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
-                !record.name.contains("System Tap")
-            }
-            if let encoded = try? JSONEncoder().encode(clean) {
-                defaults.set(encoded, forKey: Self.knownDevicesKey)
-                objectWillChange.send()
-            }
-        }
-    }
 
     func recordSeen(devices: [AudioDevice]) {
         let validDevices = devices.filter {

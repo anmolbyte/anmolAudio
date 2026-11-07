@@ -404,7 +404,7 @@ private struct MenuBarLabel: View {
                 runLaunchCoordinator()
             }
             .onChange(of: deviceManager.selectedOutput) { oldOut, newOut in
-                let isSwitch = (oldOut?.uid != newOut?.uid)
+                let isSwitch = (oldOut != nil && oldOut?.uid != newOut?.uid)
                 if let old = oldOut, let new = newOut, isSwitch {
                     if outputPreferences.autoPauseOnDeviceChange {
                         launchLog.info("Auto-pausing media playback on device change (\(old.name) -> \(new.name))")

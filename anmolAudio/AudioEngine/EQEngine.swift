@@ -510,8 +510,9 @@ final class EQEngine: ObservableObject {
         //    the first input callback fires. Crossfeed and the spectrum analyzer are
         //    configured against the tap's native rate so their per-sample math (ITD
         //    delay, FFT bin → Hz mapping) is correct relative to what was captured.
+        activeOutput = output
         if let preset = effectivePreset {
-            let activeUID = activeOutput?.uid ?? ""
+            let activeUID = output.uid
             let eqOn = outputPreferences?.enableEQ(for: activeUID) ?? true
             let preampOn = outputPreferences?.enablePreamp(for: activeUID) ?? true
             eqProcessor.configure(preset: preset, sampleRate: tapSampleRate, enableEQ: eqOn, enablePreamp: preampOn)
@@ -544,7 +545,6 @@ final class EQEngine: ObservableObject {
                 try halOutput.start(deviceID: output.id, clientFormat: clientFormat)
             }
 
-            activeOutput = output
             isRunning = true
             log.info("Engine started: tap=\(Int(tapSampleRate)) Hz → \(output.name) @ \(Int(halSR)) Hz halBounced=\(!canKeepHAL)")
 

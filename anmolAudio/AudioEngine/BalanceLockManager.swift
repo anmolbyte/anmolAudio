@@ -15,6 +15,7 @@ final class BalanceLockManager: ObservableObject {
     private var panListener: AudioDevicePropertyListener?
     private var volumeListener: AudioDevicePropertyListener?
     private var isResetting: Bool = false
+    private var lastResetTime: Date = .distantPast
 
     private let preferences: OutputSelectionPreferences
     private var cancellables = Set<AnyCancellable>()
@@ -22,6 +23,7 @@ final class BalanceLockManager: ObservableObject {
     init(preferences: OutputSelectionPreferences) {
         self.preferences = preferences
         preferences.objectWillChange
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.checkAndResetBalance()
@@ -73,7 +75,9 @@ final class BalanceLockManager: ObservableObject {
         guard let uid = boundDeviceUID,
               preferences.autoLockBalance(for: uid),
               !isResetting,
+              Date().timeIntervalSince(lastResetTime) > 0.35,
               let deviceID = boundDeviceID else { return }
+        lastResetTime = Date()
         isResetting = true
         defer { isResetting = false }
 
@@ -87,7 +91,7 @@ final class BalanceLockManager: ObservableObject {
             var panVal: Float32 = 0.5
             var size = UInt32(MemoryLayout<Float32>.size)
             if AudioObjectGetPropertyData(panID, &addr, 0, nil, &size, &panVal) == noErr {
-                if abs(panVal - 0.5) > 0.005 {
+                if abs(panVal - 0.5) > 0.015 {
                     log.info("Balance drift detected on pan control (\(panVal)). Auto-locking to 0.5")
                     var target: Float32 = 0.5
                     let status = AudioObjectSetPropertyData(panID, &addr, 0, nil, size, &target)
@@ -115,9 +119,9 @@ final class BalanceLockManager: ObservableObject {
             var size = UInt32(MemoryLayout<Float32>.size)
             if AudioObjectGetPropertyData(deviceID, &v1Addr, 0, nil, &size, &v1) == noErr &&
                AudioObjectGetPropertyData(deviceID, &v2Addr, 0, nil, &size, &v2) == noErr {
-                if abs(v1 - v2) > 0.005 {
+                if abs(v1 - v2) > 0.015 {
                     log.info("Balance drift detected on channel volumes (L: \(v1), R: \(v2)). Auto-locking to match")
-                    let target = max(v1, v2)
+                    let target = (v1 + v2) / 2.0
                     var val = target
                     _ = AudioObjectSetPropertyData(deviceID, &v1Addr, 0, nil, size, &val)
                     _ = AudioObjectSetPropertyData(deviceID, &v2Addr, 0, nil, size, &val)

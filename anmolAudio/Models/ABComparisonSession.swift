@@ -70,6 +70,7 @@ final class ABComparisonSession: ObservableObject {
 
     // MARK: - Dependencies
 
+    private var transitionTask: Task<Void, Never>?
     private let engine: EQEngine
     private let catalog: PresetCatalog
     private let store: PresetStore
@@ -227,7 +228,8 @@ final class ABComparisonSession: ObservableObject {
         guard case .running(.blind) = phase, !isTransitioning else { return }
         trials.append(Trial(votedSlot: currentSlot, actualSlot: currentSlot, timestamp: Date()))
         isTransitioning = true
-        Task { [weak self] in
+        transitionTask?.cancel()
+        transitionTask = Task { [weak self] in
             await self?.runBlindTrialTransition()
             await MainActor.run { self?.isTransitioning = false }
         }
@@ -239,6 +241,7 @@ final class ABComparisonSession: ObservableObject {
     private func runBlindTrialTransition() async {
         await MainActor.run { engine.setComparisonMute(true) }
         try? await Task.sleep(nanoseconds: 120_000_000)
+        guard !Task.isCancelled, case .running = phase else { return }
         await MainActor.run {
             blindMask = Bool.random()
             let labelOne: EQProcessor.Slot = blindMask ? .b : .a
@@ -246,21 +249,25 @@ final class ABComparisonSession: ObservableObject {
             engine.setComparisonSlot(labelOne)
         }
         try? await Task.sleep(nanoseconds: 120_000_000)
+        guard !Task.isCancelled, case .running = phase else { return }
         await MainActor.run { engine.setComparisonMute(false) }
     }
 
     func finish() {
         guard case .running(let m) = phase else { return }
+        transitionTask?.cancel()
         phase = .results(m)
     }
 
     func backToSetup() {
+        transitionTask?.cancel()
         phase = .setup
         trials = []
         engine.exitComparisonMode()
     }
 
     func cancel() {
+        transitionTask?.cancel()
         phase = .setup
         trials = []
         engine.exitComparisonMode()

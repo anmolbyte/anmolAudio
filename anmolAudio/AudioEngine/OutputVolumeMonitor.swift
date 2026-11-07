@@ -90,7 +90,7 @@ final class OutputVolumeMonitor: ObservableObject {
         // 1. Enforce max volume limit first if active for this device
         if prefs.enforceVolumeLimit(for: uid) {
             let limit = prefs.maxVolumeLimit(for: uid)
-            if currentVol > (limit + 0.005) {
+            if currentVol > (limit + 0.015) {
                 log.info("Volume Limit on connect: clamping device \(deviceID) from \(currentVol) to \(limit)")
                 CoreAudioVolume.setScalar(limit, for: deviceID)
             }
@@ -101,7 +101,7 @@ final class OutputVolumeMonitor: ObservableObject {
             if prefs.safeVolumeOnConnect(for: uid) {
                 let safeCap: Float = 0.30
                 let effectiveVol = CoreAudioVolume.scalar(for: deviceID) ?? currentVol
-                if effectiveVol > (safeCap + 0.005) {
+                if effectiveVol > (safeCap + 0.015) {
                     log.info("Safe Volume on connect: clamping device \(deviceID) from \(effectiveVol) to \(safeCap)")
                     CoreAudioVolume.setScalar(safeCap, for: deviceID)
                 }
@@ -126,7 +126,7 @@ final class OutputVolumeMonitor: ObservableObject {
         // Enforce maximum volume limit ceiling if enabled for this device
         if prefs.enforceVolumeLimit(for: uid) {
             let maxLimit = prefs.maxVolumeLimit(for: uid)
-            if currentVol > (maxLimit + 0.005) {
+            if currentVol > (maxLimit + 0.015) {
                 isClampingVolume = true
                 defer { isClampingVolume = false }
                 log.info("Volume (\(currentVol)) exceeded max limit (\(maxLimit)) for \(uid); clamping")

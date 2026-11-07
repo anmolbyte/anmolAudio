@@ -279,6 +279,12 @@ final class VoIPMonitor: ObservableObject {
                 let ownPID = getpid()
                 let ownBundleID = Bundle.main.bundleIdentifier ?? "app.anmol.anmolAudio"
                 let voipSet = self.cachedVoIPBundleIDs
+                let dedicatedTelephonyRingingIDs: Set<String> = [
+                    "com.apple.telephonyutilities.callservicesd",
+                    "com.apple.TelephonyUtilities",
+                    "com.apple.mobilephone",
+                    "com.apple.FaceTime"
+                ]
                 for proc in procs {
                     // Critical: Ignore anmolAudio itself. anmolAudio has an active Core Audio
                     // process tap, which coreaudiod flags as running input. Never attribute our own
@@ -300,7 +306,7 @@ final class VoIPMonitor: ObservableObject {
                        bid != "app.anmol.anmolAudio" {
                         if hasInput {
                             lastSeenMicTime[bid] = now
-                        } else if voipSet.contains(bid) && AudioProcessInfo.isRunningOutput(proc) {
+                        } else if dedicatedTelephonyRingingIDs.contains(bid) && AudioProcessInfo.isRunningOutput(proc) {
                             ringingVoIPApps.insert(bid)
                         }
                     }
