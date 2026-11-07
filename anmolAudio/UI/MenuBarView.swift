@@ -227,6 +227,14 @@ struct MenuBarView: View {
             hoveredAppBundleID = nil
             processListListener = nil
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
+            stopMetering()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { note in
+            if let win = note.object as? NSWindow, (!win.occlusionState.contains(.visible) || !win.isVisible) {
+                stopMetering()
+            }
+        }
         .onChange(of: isAppVolumesExpanded) { _, expanded in
             if expanded {
                 startMetering()

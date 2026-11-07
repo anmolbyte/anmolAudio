@@ -195,9 +195,11 @@ struct AutoEqClient {
         guard !bands.isEmpty else {
             throw AutoEqError.decoding("No filter lines found")
         }
-        // The engine has 10 sections; the AutoEq files emit at most 10 filters today,
-        // but defensively trim in case of upstream changes.
-        if bands.count > 10 { bands = Array(bands.prefix(10)) }
+        // The engine supports EQProcessor.sectionCount sections (12); defensively trim
+        // if upstream files ever emit more than the engine's cascade capacity.
+        if bands.count > EQProcessor.sectionCount {
+            bands = Array(bands.prefix(EQProcessor.sectionCount))
+        }
         return ParsedParametric(preamp: preamp, bands: bands)
     }
 

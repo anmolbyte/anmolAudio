@@ -31,6 +31,8 @@ final class ClipMeter {
 
     private var lock = os_unfair_lock()
     private(set) var sampleRate: Double = 48_000
+    private var cachedDecay: Float = 0.965
+    private var cachedDecaySR: Double = 48_000
 
     // Peak envelope state — read and written only under the lock (which the
     // audio thread holds via trylock).
@@ -64,6 +66,11 @@ final class ClipMeter {
     func configure(sampleRate: Double) {
         os_unfair_lock_lock(&lock)
         self.sampleRate = sampleRate
+        if sampleRate > 0 {
+            let blockSeconds = 512.0 / sampleRate
+            self.cachedDecay = Float(exp(-blockSeconds / Self.releaseTimeConstant))
+            self.cachedDecaySR = sampleRate
+        }
         os_unfair_lock_unlock(&lock)
     }
 
@@ -99,9 +106,13 @@ final class ClipMeter {
 
         let sr = sampleRate
         guard sr > 0, !sr.isNaN else { return }
-        let blockSeconds = Double(frames) / sr
-        // exp(-Δt/τ) for the per-block envelope decay.
-        let decay = Float(exp(-blockSeconds / Self.releaseTimeConstant))
+        let decay: Float
+        if frames == 512 && sr == cachedDecaySR {
+            decay = cachedDecay
+        } else {
+            let blockSeconds = Double(frames) / sr
+            decay = Float(exp(-blockSeconds / Self.releaseTimeConstant))
+        }
 
         peakL = max(blockPeakL, peakL * decay)
         peakR = max(blockPeakR, peakR * decay)
