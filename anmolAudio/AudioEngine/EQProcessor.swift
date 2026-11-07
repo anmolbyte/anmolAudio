@@ -43,6 +43,15 @@ final class EQProcessor {
     private var pendingMuteLinear: Float = 1.0
     private var muteLinear: Float = 1.0
 
+    private var pendingIsMono: Bool = false
+    private var isMono: Bool = false
+    private var pendingIsChannelSwap: Bool = false
+    private var isChannelSwap: Bool = false
+    private var pendingBalanceL: Float = 1.0
+    private var pendingBalanceR: Float = 1.0
+    private var balanceL: Float = 1.0
+    private var balanceR: Float = 1.0
+
     static let identityFlatCoefficients: [Double] = {
         var identity: [Double] = []
         identity.reserveCapacity(5 * EQProcessor.sectionCount)
@@ -107,6 +116,34 @@ final class EQProcessor {
         os_unfair_lock_unlock(&lock)
     }
 
+    func setChannelRouting(isMono: Bool, isChannelSwap: Bool) {
+        os_unfair_lock_lock(&lock)
+        pendingIsMono = isMono
+        pendingIsChannelSwap = isChannelSwap
+        os_unfair_lock_unlock(&lock)
+    }
+
+    /// Sets stereo pan balance between -1.0 (full Left) and +1.0 (full Right). 0.0 is Center.
+    func setPan(_ pan: Float) {
+        let clamped = max(-1.0, min(1.0, pan))
+        let l: Float
+        let r: Float
+        if abs(clamped) < 0.001 {
+            l = 1.0
+            r = 1.0
+        } else if clamped < 0 {
+            l = 1.0
+            r = max(0.0, 1.0 + clamped)
+        } else {
+            l = max(0.0, 1.0 - clamped)
+            r = 1.0
+        }
+        os_unfair_lock_lock(&lock)
+        pendingBalanceL = l
+        pendingBalanceR = r
+        os_unfair_lock_unlock(&lock)
+    }
+
     // MARK: - Audio-thread entry
 
     /// Apply preamp + biquad cascades in place on left/right Float32 buffers. Picks up
@@ -140,6 +177,10 @@ final class EQProcessor {
                 preampLinear = pendingPreampLinear
             }
             muteLinear = pendingMuteLinear
+            isMono = pendingIsMono
+            isChannelSwap = pendingIsChannelSwap
+            balanceL = pendingBalanceL
+            balanceR = pendingBalanceR
             os_unfair_lock_unlock(&lock)
         }
 
@@ -159,10 +200,28 @@ final class EQProcessor {
                 }
                 cascadeL.process(left, frames: frames)
                 cascadeR.process(right, frames: frames)
-                if muteLinear != 1.0 {
-                    var m = muteLinear
-                    vDSP_vsmul(left, 1, &m, left, 1, vDSP_Length(frames))
-                    vDSP_vsmul(right, 1, &m, right, 1, vDSP_Length(frames))
+
+                if isChannelSwap {
+                    for i in 0..<frames {
+                        let tmp = left[i]
+                        left[i] = right[i]
+                        right[i] = tmp
+                    }
+                }
+                if isMono {
+                    vDSP_vadd(left, 1, right, 1, left, 1, vDSP_Length(frames))
+                    var half: Float = 0.5
+                    vDSP_vsmul(left, 1, &half, left, 1, vDSP_Length(frames))
+                    memcpy(right, left, frames * MemoryLayout<Float>.size)
+                }
+
+                var outL = muteLinear * balanceL
+                var outR = muteLinear * balanceR
+                if outL != 1.0 {
+                    vDSP_vsmul(left, 1, &outL, left, 1, vDSP_Length(frames))
+                }
+                if outR != 1.0 {
+                    vDSP_vsmul(right, 1, &outR, right, 1, vDSP_Length(frames))
                 }
                 if consecutiveSilentBlocks == silentHangoverBlocks {
                     cascadeL.reset()
@@ -183,13 +242,30 @@ final class EQProcessor {
             cascadeL.process(left, frames: frames)
             cascadeR.process(right, frames: frames)
 
-            // Post-cascade mute. Scaling here (rather than zeroing the pre-cascade
+            if isChannelSwap {
+                for i in 0..<frames {
+                    let tmp = left[i]
+                    left[i] = right[i]
+                    right[i] = tmp
+                }
+            }
+            if isMono {
+                vDSP_vadd(left, 1, right, 1, left, 1, vDSP_Length(frames))
+                var half: Float = 0.5
+                vDSP_vsmul(left, 1, &half, left, 1, vDSP_Length(frames))
+                memcpy(right, left, frames * MemoryLayout<Float>.size)
+            }
+
+            // Post-cascade mute & stereo pan. Scaling here (rather than zeroing the pre-cascade
             // gain) means the IIR delay lines keep running on real audio, so unmute
             // is glitch-free — the cascades have been computing as usual the whole time.
-            if muteLinear != 1.0 {
-                var m = muteLinear
-                vDSP_vsmul(left, 1, &m, left, 1, vDSP_Length(frames))
-                vDSP_vsmul(right, 1, &m, right, 1, vDSP_Length(frames))
+            var outL = muteLinear * balanceL
+            var outR = muteLinear * balanceR
+            if outL != 1.0 {
+                vDSP_vsmul(left, 1, &outL, left, 1, vDSP_Length(frames))
+            }
+            if outR != 1.0 {
+                vDSP_vsmul(right, 1, &outR, right, 1, vDSP_Length(frames))
             }
         }
     }

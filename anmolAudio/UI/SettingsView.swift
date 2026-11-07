@@ -15,6 +15,7 @@ struct SettingsView: View {
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var engine: EQEngine
     @ObservedObject var appVolumeStore: AppVolumeStore
+    @ObservedObject var balanceLockManager: BalanceLockManager
 
     @AppStorage("disableTransparency") private var disableTransparency: Bool = false
 
@@ -34,7 +35,8 @@ struct SettingsView: View {
                 devicePresetMemory: devicePresetMemory,
                 presetStore: presetStore,
                 presetCatalog: presetCatalog,
-                engine: engine
+                engine: engine,
+                balanceLockManager: balanceLockManager
             )
             .tabItem { Label("Devices", systemImage: "headphones") }
 
@@ -82,9 +84,6 @@ private struct GeneralSettingsTab: View {
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
 
     @AppStorage("startEngineOnLaunch") private var startEngineOnLaunch: Bool = true
-    @AppStorage("suspendDuringVoIP") private var suspendDuringVoIP: Bool = true
-    @AppStorage(EQEngine.followNewAudioAppsKey) private var followNewAudioApps: Bool = true
-    @AppStorage(EQEngine.muteOnDeviceRateChangeKey) private var muteOnDeviceRateChange: Bool = true
     @AppStorage("disableTransparency") private var disableTransparency: Bool = false
 
     var body: some View {
@@ -103,30 +102,6 @@ private struct GeneralSettingsTab: View {
                     Toggle("Start engine when anmolAudio launches", isOn: $startEngineOnLaunch)
                         .toggleStyle(.checkbox)
                         .help("Begin processing audio as soon as anmolAudio boots, instead of waiting for a manual start")
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Bypass automatically during VoIP calls", isOn: $suspendDuringVoIP)
-                            .toggleStyle(.checkbox)
-                            .help("Suspends anmolAudio when your microphone is active to prevent FaceTime or Zoom from ducking your audio.")
-                        Text("FaceTime and Zoom aggressively lower your output volume to prevent echoes when an aggregate audio device is active. Bypassing anmolAudio when the mic is active restores hardware echo cancellation.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Capture apps that start after anmolAudio", isOn: $followNewAudioApps)
-                            .toggleStyle(.checkbox)
-                            .help("Rebuild the audio tap when an app that launched later starts playing, so its audio goes through anmolAudio too")
-                        Text("macOS fixes the list of apps an audio tap covers at the moment the tap is created, so an app you open later plays around anmolAudio until the engine restarts. With this on, anmolAudio rebuilds the tap itself — silently when nothing is playing, and with a brief fade when something is. Turn it off if you'd rather never hear that interruption.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
 
                     Divider()
 
@@ -156,13 +131,54 @@ private struct GeneralSettingsTab: View {
                     Divider()
 
                     VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Mute briefly on output rate change", isOn: $muteOnDeviceRateChange)
+                        Toggle("Auto-mute on device change", isOn: $outputPreferences.autoMuteOnDeviceChange)
                             .toggleStyle(.checkbox)
-                            .help("Fade audio out for ~150 ms when the output device's sample rate changes, to mask the resampler transient")
-                        Text("Apple Music and other hi-res sources can change your DAC's sample rate between tracks. Fading briefly hides the audible pitch glitch as Core Audio's internal sample-rate converter re-tunes. Turn this off if you'd rather hear the unmasked transition.")
+                            .help("Mutes the new audio output device when the playback destination changes or disconnects")
+                        Text("Prevents audio from accidentally blasting through MacBook speakers when headphones are unplugged or Bluetooth disconnects.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("Pause music while on call", isOn: $outputPreferences.pauseMusicOnCall)
+                                .toggleStyle(.checkbox)
+                                .help("Automatically pauses media playback when an incoming or active call is detected")
+                            Text("Pauses media players (Spotify, Apple Music, Safari/Chrome YouTube, etc.) during calls.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if outputPreferences.pauseMusicOnCall {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Picker("", selection: $outputPreferences.callPauseBehavior) {
+                                    ForEach(OutputSelectionPreferences.CallPauseBehavior.allCases) { behavior in
+                                        Text(behavior.title).tag(behavior)
+                                    }
+                                }
+                                .pickerStyle(.radioGroup)
+                                .padding(.leading, 18)
+
+                                Text(outputPreferences.callPauseBehavior.detail)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.leading, 18)
+                                    .fixedSize(horizontal: false, vertical: true)
+
+                                Toggle("Resume music after call", isOn: $outputPreferences.resumeMusicAfterCall)
+                                    .toggleStyle(.checkbox)
+                                    .padding(.leading, 18)
+                                    .help("Automatically resumes playback when the call ends, if music was playing before")
+                                Text("Resumes playback once you hang up, provided music was playing before the call.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.leading, 18)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
 
                     Divider()

@@ -8,8 +8,10 @@ private let log = Logger(subsystem: "app.anmol.anmolAudio", category: "VoIPMonit
 
 final class VoIPMonitor: ObservableObject {
     @Published var isInputActive: Bool = false
+    @Published var isRinging: Bool = false
     @Published var activeMicBundleIDs: Set<String> = []
     var onActiveMicChange: ((Set<String>) -> Void)?
+    var onCallStateChange: ((_ isCallActive: Bool, _ isRinging: Bool) -> Void)?
 
     private let queue = DispatchQueue(label: "app.anmol.VoIPMonitor", qos: .utility)
     private var lastSeenMicTime: [String: Date] = [:]
@@ -17,6 +19,7 @@ final class VoIPMonitor: ObservableObject {
     private var isEngineRunning = false
     private var pendingPollItem: DispatchWorkItem?
     private var runningVoIPApps: Set<String> = []
+    private var cachedVoIPBundleIDs: Set<String> = []
     private var workspaceObservers: [NSObjectProtocol] = []
 
     private var inputDeviceListenerBlocks: [AudioDeviceID: AudioObjectPropertyListenerBlock] = [:]
@@ -48,6 +51,7 @@ final class VoIPMonitor: ObservableObject {
         let initialSet = initialVoIPApps
         queue.async {
             self.runningVoIPApps = initialSet
+            self.cachedVoIPBundleIDs = voipSet
         }
 
         let launchToken = NSWorkspace.shared.notificationCenter.addObserver(
@@ -82,6 +86,14 @@ final class VoIPMonitor: ObservableObject {
         }
 
         workspaceObservers = [launchToken, termToken]
+    }
+
+    // MARK: - VoIP Bundle IDs Update
+
+    func updateVoIPBundleIDs(_ bundleIDs: Set<String>) {
+        queue.async { [weak self] in
+            self?.cachedVoIPBundleIDs = bundleIDs
+        }
     }
 
     // MARK: - Core Audio Push Listeners (Zero Polling While Idle)
@@ -141,13 +153,13 @@ final class VoIPMonitor: ObservableObject {
         }
         inputDeviceListenerBlocks.removeAll()
 
-        let ins = CoreAudioDevices.all().filter { dev in
-            dev.hasInput &&
+        let allDevs = CoreAudioDevices.all().filter { dev in
+            (dev.hasInput || dev.hasOutput) &&
             !dev.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
             !dev.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
             !dev.name.contains("System Tap")
         }
-        for dev in ins {
+        for dev in allDevs {
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 self?.queue.async { self?.checkStatus() }
             }
@@ -236,14 +248,37 @@ final class VoIPMonitor: ObservableObject {
             }
         }
 
-        let now = Date()
+        let outs = CoreAudioDevices.all().filter { dev in
+            dev.hasOutput &&
+            !dev.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+            !dev.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+            !dev.name.contains("System Tap")
+        }
+        var isOutputRunning = false
+        for device in outs {
+            var isRunning: UInt32 = 0
+            var isRunningSize = UInt32(MemoryLayout<UInt32>.size)
+            var isRunningAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            if AudioObjectGetPropertyData(device.id, &isRunningAddress, 0, nil, &isRunningSize, &isRunning) == noErr {
+                if isRunning != 0 {
+                    isOutputRunning = true
+                    break
+                }
+            }
+        }
 
-        // FAST PATH: If no physical audio input device is running anywhere in macOS,
-        // no application can be recording audio. Skip the heavy Mach IPC loop completely!
-        if currentlyActive {
+        let now = Date()
+        var ringingVoIPApps: Set<String> = []
+
+        if currentlyActive || isOutputRunning {
             if let procs = try? AudioProcessInfo.allProcessObjects() {
                 let ownPID = getpid()
                 let ownBundleID = Bundle.main.bundleIdentifier ?? "app.anmol.anmolAudio"
+                let voipSet = self.cachedVoIPBundleIDs
                 for proc in procs {
                     // Critical: Ignore anmolAudio itself. anmolAudio has an active Core Audio
                     // process tap, which coreaudiod flags as running input. Never attribute our own
@@ -257,12 +292,16 @@ final class VoIPMonitor: ObservableObject {
                     )
                     var isRunningInput: UInt32 = 0
                     var s = UInt32(MemoryLayout<UInt32>.size)
-                    if AudioObjectGetPropertyData(proc, &isInputAddr, 0, nil, &s, &isRunningInput) == noErr, isRunningInput != 0 {
-                        if let bid = AudioProcessInfo.bundleID(for: proc),
-                           !bid.isEmpty,
-                           bid != ownBundleID,
-                           bid != "app.anmol.anmolAudio" {
+                    let hasInput = (AudioObjectGetPropertyData(proc, &isInputAddr, 0, nil, &s, &isRunningInput) == noErr && isRunningInput != 0)
+
+                    if let bid = AudioProcessInfo.bundleID(for: proc),
+                       !bid.isEmpty,
+                       bid != ownBundleID,
+                       bid != "app.anmol.anmolAudio" {
+                        if hasInput {
                             lastSeenMicTime[bid] = now
+                        } else if voipSet.contains(bid) && AudioProcessInfo.isRunningOutput(proc) {
+                            ringingVoIPApps.insert(bid)
                         }
                     }
                 }
@@ -275,6 +314,7 @@ final class VoIPMonitor: ObservableObject {
         }
         let activeMicSet = Set(lastSeenMicTime.keys)
         let hasRunningVoIPApps = !runningVoIPApps.isEmpty
+        let isRingingNow = !ringingVoIPApps.isEmpty
 
         // Read and update state exclusively on the main queue without blocking the utility queue.
         DispatchQueue.main.async { [weak self] in
@@ -283,6 +323,11 @@ final class VoIPMonitor: ObservableObject {
             let isVoIPActiveInAudio = !activeMicSet.intersection(voipSet).isEmpty || !activeMicSet.isEmpty
             let isVoIPAppRunning = isVoIPActiveInAudio || hasRunningVoIPApps
             let shouldBypass = (currentlyActive && isVoIPAppRunning) || isVoIPActiveInAudio
+
+            if self.isRinging != isRingingNow {
+                self.isRinging = isRingingNow
+                log.info("VoIP Monitor: Ringing state changed to \(isRingingNow) (apps: \(ringingVoIPApps.joined(separator: ", ")))")
+            }
 
             if self.activeMicBundleIDs != activeMicSet {
                 self.activeMicBundleIDs = activeMicSet
@@ -295,20 +340,19 @@ final class VoIPMonitor: ObservableObject {
                 log.info("VoIP Monitor: Input inactive or VoIP app closed. Resuming.")
                 self.isInputActive = false
             }
+            self.onCallStateChange?(self.isInputActive, isRingingNow)
         }
 
-        // Schedule next poll ONLY if input is currently active or hangover has not yet drained.
-        // When completely idle, we stop polling entirely — Core Audio push listeners will wake us
-        // in 0 ms the instant an input device begins running.
+        // Schedule next poll ONLY if input is currently active, hangover has not yet drained, or ringing.
         pendingPollItem?.cancel()
         pendingPollItem = nil
 
-        if currentlyActive || !lastSeenMicTime.isEmpty {
+        if currentlyActive || isRingingNow || !lastSeenMicTime.isEmpty {
             let item = DispatchWorkItem { [weak self] in
                 self?.checkStatus()
             }
             self.pendingPollItem = item
-            queue.asyncAfter(deadline: .now() + 2.5, execute: item)
+            queue.asyncAfter(deadline: .now() + 1.5, execute: item)
         }
     }
 }

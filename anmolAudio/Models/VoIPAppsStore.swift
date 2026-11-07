@@ -91,10 +91,7 @@ final class VoIPAppsStore: ObservableObject {
         if let policy = appCallPolicies[bundleID] {
             return policy
         }
-        if voipBundleIDs.contains(bundleID) {
-            return .inherit
-        }
-        return .none
+        return .inherit
     }
 
     func setCallPolicy(_ policy: AppCallPolicy, for bundleID: String) {

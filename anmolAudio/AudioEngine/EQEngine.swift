@@ -141,7 +141,7 @@ final class EQEngine: ObservableObject {
         return set
     }
 
-    /// Evaluates if active call exclusions changed and rebuilds the tap if needed.
+    /// Evaluates if active call exclusions changed and updates call mode DSP.
     func handleCallAudioStateChanged() {
         guard isRunning else { return }
         let newExcluded = effectiveExcludedBundleIDs
@@ -150,6 +150,25 @@ final class EQEngine: ObservableObject {
             lastEffectiveExcludedBundleIDs = newExcluded
             reEnumerateTapTargets()
         }
+        updateCallModeDSP()
+    }
+
+    /// Configures live DSP (EQ and Preamp) accounting for call state and per-device call settings.
+    func updateCallModeDSP() {
+        guard isRunning, let preset = effectivePreset else { return }
+        let activeUID = activeOutput?.uid ?? ""
+        let isCallActive = (voipMonitor?.isInputActive == true)
+        let isCallInEQ = isCallActive && (outputPreferences?.aecDucking(for: activeUID) == true)
+
+        let eqOn = isCallInEQ ? (outputPreferences?.enableEQDuringCalls(for: activeUID) ?? true) : true
+        let preampOn = isCallInEQ ? (outputPreferences?.enablePreampDuringCalls(for: activeUID) ?? true) : true
+
+        eqProcessor.configure(
+            preset: preset,
+            sampleRate: activeSampleRate ?? 48_000,
+            enableEQ: eqOn,
+            enablePreamp: preampOn
+        )
     }
 
     // Tap-side sample-rate listener. Fires on every tap-rate change (hi-res
@@ -500,6 +519,7 @@ final class EQEngine: ObservableObject {
             // Safety fallback: ensure preamp is clamped safely
             eqProcessor.setPreamp(dB: 0.0)
         }
+        updateChannelRouting()
         eqProcessor.reset()
         spectrumAnalyzer.reset()
         spectrumAnalyzer.configure(sampleRate: tapSampleRate)
@@ -824,7 +844,8 @@ final class EQEngine: ObservableObject {
         log.info("Output device rate moved: \(Int(previous)) Hz → \(Int(actual)) Hz (halSR pin unchanged; HAL Output AU bridging via internal SRC)")
         lastDeviceRate = actual
 
-        let muteEnabled = UserDefaults.standard.object(forKey: Self.muteOnDeviceRateChangeKey) as? Bool ?? true
+        let activeUID = activeOutput?.uid ?? ""
+        let muteEnabled = outputPreferences?.muteOnRateChange(for: activeUID) ?? true
         if muteEnabled {
             scheduleDeviceRateFadeMute()
         }
@@ -1119,13 +1140,20 @@ final class EQEngine: ObservableObject {
         eqProcessor.configure(preset: preset, sampleRate: activeSampleRate ?? 48_000, enableEQ: eqOn, enablePreamp: preampOn)
     }
 
-    /// Reconfigures DSP bands and preamp when per-device enableEQ or enablePreamp settings change.
+    /// Reconfigures DSP bands, preamp, and channel routing when per-device settings change.
     func updateProcessingConfiguration() {
-        guard isRunning, let preset = effectivePreset else { return }
-        let activeUID = activeOutput?.uid ?? ""
-        let eqOn = outputPreferences?.enableEQ(for: activeUID) ?? true
-        let preampOn = outputPreferences?.enablePreamp(for: activeUID) ?? true
-        eqProcessor.configure(preset: preset, sampleRate: activeSampleRate ?? 48_000, enableEQ: eqOn, enablePreamp: preampOn)
+        updateCallModeDSP()
+        updateChannelRouting()
+    }
+
+    /// Updates live mono downmix, channel swap, and pan balance in the EQ processor for the active output device.
+    func updateChannelRouting() {
+        guard let outputPreferences, let activeOutput else { return }
+        let mono = outputPreferences.isMonoDownmix(for: activeOutput.uid)
+        let swap = outputPreferences.isChannelSwap(for: activeOutput.uid)
+        let pan = outputPreferences.pan(for: activeOutput.uid)
+        eqProcessor.setChannelRouting(isMono: mono, isChannelSwap: swap)
+        eqProcessor.setPan(pan)
     }
 
     func updateBand(index: Int, band: EQBand) {

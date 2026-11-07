@@ -87,6 +87,30 @@ final class OutputSelectionPreferences: ObservableObject {
         }
     }
 
+    /// Trigger behavior for pausing media during audio/video calls.
+    enum CallPauseBehavior: String, Codable, CaseIterable, Identifiable {
+        case onAnswer = "onAnswer"
+        case onRing = "onRing"
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .onAnswer: return "Pause when call is answered"
+            case .onRing:   return "Pause immediately on incoming ring"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .onAnswer:
+                return "Auto-detects active call status and pauses playback once the call is connected or in progress."
+            case .onRing:
+                return "Pauses all media immediately as soon as a ring is received, whether or not the call is accepted."
+            }
+        }
+    }
+
     /// Persistent record of every audio device anmolAudio has ever encountered.
     struct KnownDeviceRecord: Codable, Identifiable {
         var id: String { uid }
@@ -97,10 +121,17 @@ final class OutputSelectionPreferences: ObservableObject {
         var policy: DevicePolicy
         var aecDucking: Bool?
         var backgroundAudioDucking: Bool?
+        var enablePreampDuringCalls: Bool?
+        var enableEQDuringCalls: Bool?
         var enablePreamp: Bool?
         var enableEQ: Bool?
         var bypassCallAudioToDAC: Bool?
         var disableSystemDucking: Bool?
+        var muteOnRateChange: Bool?
+        var isMonoDownmix: Bool?
+        var isChannelSwap: Bool?
+        var autoLockBalance: Bool?
+        var pan: Float?
     }
 
     static let lastOutputUIDKey = "anmolAudio.lastOutputDeviceUID"
@@ -108,6 +139,11 @@ final class OutputSelectionPreferences: ObservableObject {
     static let ignoreDisplayAudioKey = "anmolAudio.ignoreDisplayAudio"
     static let callHandlingModeKey = "anmolAudio.callHandlingMode"
     static let knownDevicesKey = "anmolAudio.knownDevices"
+    static let autoLockBalanceKey = "anmolAudio.autoLockBalance"
+    static let autoMuteOnDeviceChangeKey = "anmolAudio.autoMuteOnDeviceChange"
+    static let pauseMusicOnCallKey = "anmolAudio.pauseMusicOnCall"
+    static let resumeMusicAfterCallKey = "anmolAudio.resumeMusicAfterCall"
+    static let callPauseBehaviorKey = "anmolAudio.callPauseBehavior"
 
     // Legacy migration keys
     static let legacyLastOutputUIDKey = "lurar.lastOutputDeviceUID"
@@ -116,8 +152,45 @@ final class OutputSelectionPreferences: ObservableObject {
 
     private let defaults: UserDefaults
 
+    @Published var autoMuteOnDeviceChange: Bool {
+        didSet {
+            defaults.set(autoMuteOnDeviceChange, forKey: Self.autoMuteOnDeviceChangeKey)
+        }
+    }
+
+    @Published var pauseMusicOnCall: Bool {
+        didSet {
+            defaults.set(pauseMusicOnCall, forKey: Self.pauseMusicOnCallKey)
+        }
+    }
+
+    @Published var resumeMusicAfterCall: Bool {
+        didSet {
+            defaults.set(resumeMusicAfterCall, forKey: Self.resumeMusicAfterCallKey)
+        }
+    }
+
+    @Published var callPauseBehavior: CallPauseBehavior {
+        didSet {
+            defaults.set(callPauseBehavior.rawValue, forKey: Self.callPauseBehaviorKey)
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.autoMuteOnDeviceChange = defaults.bool(forKey: Self.autoMuteOnDeviceChangeKey)
+        self.pauseMusicOnCall = defaults.bool(forKey: Self.pauseMusicOnCallKey)
+        if defaults.object(forKey: Self.resumeMusicAfterCallKey) == nil {
+            self.resumeMusicAfterCall = true
+        } else {
+            self.resumeMusicAfterCall = defaults.bool(forKey: Self.resumeMusicAfterCallKey)
+        }
+        if let raw = defaults.string(forKey: Self.callPauseBehaviorKey),
+           let b = CallPauseBehavior(rawValue: raw) {
+            self.callPauseBehavior = b
+        } else {
+            self.callPauseBehavior = .onAnswer
+        }
         purgePrivateAggregateRecords()
     }
 
@@ -253,7 +326,9 @@ final class OutputSelectionPreferences: ObservableObject {
                     name: device.name,
                     transportType: device.transportType,
                     lastSeen: now,
-                    policy: initialPolicy
+                    policy: initialPolicy,
+                    autoLockBalance: true,
+                    pan: 0.0
                 ))
                 changed = true
             }
@@ -345,26 +420,119 @@ final class OutputSelectionPreferences: ObservableObject {
         }
     }
 
-    func enablePreamp(for uid: String) -> Bool {
-        knownDevices.first(where: { $0.uid == uid })?.enablePreamp ?? true
+    func enablePreampDuringCalls(for uid: String) -> Bool {
+        if let rec = knownDevices.first(where: { $0.uid == uid }) {
+            return rec.enablePreampDuringCalls ?? rec.enablePreamp ?? true
+        }
+        return true
     }
 
-    func setEnablePreamp(_ value: Bool, for uid: String) {
+    func setEnablePreampDuringCalls(_ value: Bool, for uid: String) {
         var list = knownDevices
         if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].enablePreampDuringCalls = value
             list[idx].enablePreamp = value
             self.knownDevices = list
         }
     }
 
+    func enableEQDuringCalls(for uid: String) -> Bool {
+        if let rec = knownDevices.first(where: { $0.uid == uid }) {
+            return rec.enableEQDuringCalls ?? rec.enableEQ ?? true
+        }
+        return true
+    }
+
+    func setEnableEQDuringCalls(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].enableEQDuringCalls = value
+            list[idx].enableEQ = value
+            self.knownDevices = list
+        }
+    }
+
+    func enablePreamp(for uid: String) -> Bool {
+        enablePreampDuringCalls(for: uid)
+    }
+
+    func setEnablePreamp(_ value: Bool, for uid: String) {
+        setEnablePreampDuringCalls(value, for: uid)
+    }
+
     func enableEQ(for uid: String) -> Bool {
-        knownDevices.first(where: { $0.uid == uid })?.enableEQ ?? true
+        enableEQDuringCalls(for: uid)
     }
 
     func setEnableEQ(_ value: Bool, for uid: String) {
+        setEnableEQDuringCalls(value, for: uid)
+    }
+
+    func muteOnRateChange(for uid: String) -> Bool {
+        if let rec = knownDevices.first(where: { $0.uid == uid }) {
+            return rec.muteOnRateChange ?? true
+        }
+        return true
+    }
+
+    func setMuteOnRateChange(_ value: Bool, for uid: String) {
         var list = knownDevices
         if let idx = list.firstIndex(where: { $0.uid == uid }) {
-            list[idx].enableEQ = value
+            list[idx].muteOnRateChange = value
+            self.knownDevices = list
+        }
+    }
+
+    func isMonoDownmix(for uid: String) -> Bool {
+        knownDevices.first(where: { $0.uid == uid })?.isMonoDownmix ?? false
+    }
+
+    func setIsMonoDownmix(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].isMonoDownmix = value
+            self.knownDevices = list
+        }
+    }
+
+    func isChannelSwap(for uid: String) -> Bool {
+        knownDevices.first(where: { $0.uid == uid })?.isChannelSwap ?? false
+    }
+
+    func setIsChannelSwap(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].isChannelSwap = value
+            self.knownDevices = list
+        }
+    }
+
+    func autoLockBalance(for uid: String) -> Bool {
+        if let explicit = knownDevices.first(where: { $0.uid == uid })?.autoLockBalance {
+            return explicit
+        }
+        if let global = defaults.object(forKey: Self.autoLockBalanceKey) as? Bool {
+            return global
+        }
+        return true
+    }
+
+    func setAutoLockBalance(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].autoLockBalance = value
+            self.knownDevices = list
+        }
+    }
+
+    func pan(for uid: String) -> Float {
+        knownDevices.first(where: { $0.uid == uid })?.pan ?? 0.0
+    }
+
+    func setPan(_ value: Float, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].pan = max(-1.0, min(1.0, value))
             self.knownDevices = list
         }
     }

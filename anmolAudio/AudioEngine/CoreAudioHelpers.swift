@@ -389,6 +389,22 @@ enum CoreAudioVolume {
         return muted != 0
     }
 
+    /// Sets the output device mute state. Returns true if successfully set.
+    @discardableResult
+    static func setMuted(_ muted: Bool, for id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectHasProperty(id, &addr) else { return false }
+        var isSettable: DarwinBoolean = false
+        guard AudioObjectIsPropertySettable(id, &addr, &isSettable) == noErr, isSettable.boolValue else { return false }
+        var val: UInt32 = muted ? 1 : 0
+        let status = AudioObjectSetPropertyData(id, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &val)
+        return status == noErr
+    }
+
     private static func channelScalar(for id: AudioDeviceID, element: AudioObjectPropertyElement) -> Float? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyVolumeScalar,

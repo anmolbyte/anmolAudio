@@ -18,10 +18,10 @@ struct anmolAudioApp: App {
     @StateObject private var devicePresetMemory = DevicePresetMemory()
     @StateObject private var burnInTracker = BurnInTracker()
     @StateObject private var outputVolumeMonitor = OutputVolumeMonitor()
+    @StateObject private var balanceLockManager: BalanceLockManager
     @StateObject private var voipMonitor = VoIPMonitor()
     @StateObject private var appVolumeStore = AppVolumeStore()
 
-    @AppStorage("suspendDuringVoIP") private var suspendDuringVoIP: Bool = true
     @State private var wasSuspendedForVoIP: Bool = false
 
     @Environment(\.openWindow) private var openWindow
@@ -46,6 +46,7 @@ struct anmolAudioApp: App {
                 devicePresetMemory: devicePresetMemory,
                 burnInTracker: burnInTracker,
                 outputVolumeMonitor: outputVolumeMonitor,
+                balanceLockManager: balanceLockManager,
                 excludedAppsStore: excludedAppsStore,
                 appVolumeStore: appVolumeStore,
                 voipMonitor: voipMonitor
@@ -53,7 +54,6 @@ struct anmolAudioApp: App {
         }
         .menuBarExtraStyle(.window)
         .onChange(of: voipMonitor.isInputActive, initial: false) { _, active in
-            guard suspendDuringVoIP else { return }
             switch outputPreferences.callHandlingMode {
             case .bypassCallAudio:
                 // Call audio (avconferenced, FaceTime, Zoom) is bypassed
@@ -172,7 +172,8 @@ struct anmolAudioApp: App {
                 burnInTracker: burnInTracker,
                 deviceManager: deviceManager,
                 engine: engine,
-                appVolumeStore: appVolumeStore
+                appVolumeStore: appVolumeStore,
+                balanceLockManager: balanceLockManager
             )
         }
         .defaultSize(width: 660, height: 675)
@@ -204,6 +205,7 @@ struct anmolAudioApp: App {
         let prefs = OutputSelectionPreferences()
         _outputPreferences = StateObject(wrappedValue: prefs)
         _deviceManager = StateObject(wrappedValue: DeviceManager(preferences: prefs))
+        _balanceLockManager = StateObject(wrappedValue: BalanceLockManager(preferences: prefs))
         // PresetStore needs the sync settings at init time so it can pick the
         // right backing location (local vs iCloud) before its first read. We
         // construct both eagerly here and share the same instance.
@@ -279,6 +281,7 @@ private struct MenuBarLabel: View {
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var outputVolumeMonitor: OutputVolumeMonitor
+    @ObservedObject var balanceLockManager: BalanceLockManager
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
     @ObservedObject var appVolumeStore: AppVolumeStore
     @ObservedObject var voipMonitor: VoIPMonitor
@@ -316,6 +319,8 @@ private struct MenuBarLabel: View {
                 // Seed the volume monitor on the first device (onChange covers
                 // later switches). Cheap no-op once bound.
                 outputVolumeMonitor.rebind(to: deviceManager.selectedOutput)
+                balanceLockManager.rebind(to: deviceManager.selectedOutput)
+                engine.updateChannelRouting()
                 guard !didRunLaunchCoordinator else { return }
                 didRunLaunchCoordinator = true
 
@@ -327,11 +332,32 @@ private struct MenuBarLabel: View {
                 voipMonitor.onActiveMicChange = { [weak e = engine] _ in
                     e?.handleCallAudioStateChanged()
                 }
+                voipMonitor.onCallStateChange = { [weak p = outputPreferences] isCallActive, isRinging in
+                    guard let prefs = p, prefs.pauseMusicOnCall else { return }
+                    let shouldPause: Bool
+                    switch prefs.callPauseBehavior {
+                    case .onAnswer:
+                        shouldPause = isCallActive
+                    case .onRing:
+                        shouldPause = isCallActive || isRinging
+                    }
+
+                    if shouldPause {
+                        MediaRemoteController.shared.pauseForCall()
+                    } else {
+                        if prefs.resumeMusicAfterCall {
+                            MediaRemoteController.shared.resumeAfterCall()
+                        } else {
+                            MediaRemoteController.shared.clearCallPauseState()
+                        }
+                    }
+                }
                 excludedAppsStore.onChange = { [weak e = engine] in
                     e?.reEnumerateTapTargets()
                 }
-                VoIPAppsStore.shared.onChange = { [weak e = engine] in
+                VoIPAppsStore.shared.onChange = { [weak e = engine, weak vm = voipMonitor] in
                     e?.handleCallAudioStateChanged()
+                    vm?.updateVoIPBundleIDs(VoIPAppsStore.shared.voipBundleIDs)
                 }
                 appVolumeStore.onConfigurationChange = { [weak e = engine] in
                     e?.reEnumerateTapTargets()
@@ -375,10 +401,21 @@ private struct MenuBarLabel: View {
                 burnInTracker.observe(engine: engine)
                 runLaunchCoordinator()
             }
-            .onChange(of: deviceManager.selectedOutput) { _, newOut in
-                // Re-point the volume monitor at the new device so the menu bar
-                // glyph tracks the right output (listeners are keyed by device ID).
+            .onChange(of: deviceManager.selectedOutput) { oldOut, newOut in
+                if let old = oldOut, let new = newOut, old.uid != new.uid {
+                    if outputPreferences.autoMuteOnDeviceChange {
+                        launchLog.info("Auto-muting device \(new.name) on device change")
+                        CoreAudioVolume.setMuted(true, for: new.id)
+                    }
+                    if outputPreferences.pauseMusicOnCall && old.transportType == .bluetooth && new.transportType == .builtIn {
+                        launchLog.info("Bluetooth headphones disconnected/switched; pausing media playback")
+                        MediaRemoteController.shared.pauseForCall()
+                    }
+                }
+                // Re-point the volume monitor and balance lock at the new device so listeners track the right output.
                 outputVolumeMonitor.rebind(to: newOut)
+                balanceLockManager.rebind(to: newOut)
+                engine.updateChannelRouting()
                 // Three cases:
                 // 1. We were waiting for any device to materialize at launch
                 //    (pendingAutostart) — start the engine on the first one

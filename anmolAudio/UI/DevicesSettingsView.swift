@@ -7,6 +7,7 @@ struct DevicesSettingsView: View {
     @ObservedObject var presetStore: PresetStore
     @ObservedObject var presetCatalog: PresetCatalog
     @ObservedObject var engine: EQEngine
+    @ObservedObject var balanceLockManager: BalanceLockManager
 
     @Environment(\.openWindow) private var openWindow
 
@@ -70,7 +71,7 @@ struct DevicesSettingsView: View {
                                 Text("Config")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 32, alignment: .center)
+                                    .frame(width: 44, alignment: .center)
                                 Color.clear
                                     .frame(width: 20, height: 1)
                             }
@@ -219,9 +220,10 @@ struct DevicesSettingsView: View {
             DeviceCallConfigButton(
                 record: record,
                 outputPreferences: outputPreferences,
-                engine: engine
+                engine: engine,
+                balanceLockManager: balanceLockManager
             )
-            .frame(width: 32, alignment: .center)
+            .frame(width: 44, alignment: .center)
 
             // Fixed-width slot for the forget/remove button to keep all rows and columns aligned
             Group {
@@ -284,6 +286,7 @@ private struct DeviceCallConfigButton: View {
     let record: OutputSelectionPreferences.KnownDeviceRecord
     @ObservedObject var outputPreferences: OutputSelectionPreferences
     @ObservedObject var engine: EQEngine
+    @ObservedObject var balanceLockManager: BalanceLockManager
     @State private var showPopover = false
 
     var body: some View {
@@ -297,91 +300,243 @@ private struct DeviceCallConfigButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Audio & call settings for \(record.name)")
+        .help("Configuration for \(record.name)")
         .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Settings: \(record.name)")
-                    .font(.headline)
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Device Settings: \(record.name)")
+                        .font(.headline)
 
-                // 1. Audio Processing (EQ & Preamp)
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Audio Processing")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        // 1. Calls & Ducking
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Calls & Ducking")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Toggle("Enable EQ", isOn: Binding(
-                            get: { outputPreferences.enableEQ(for: record.uid) },
-                            set: {
-                                outputPreferences.setEnableEQ($0, for: record.uid)
-                                engine.updateProcessingConfiguration()
+                            // 1a. AEC Ducking
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("AEC Ducking", isOn: Binding(
+                                    get: { outputPreferences.aecDucking(for: record.uid) },
+                                    set: {
+                                        outputPreferences.setAECDucking($0, for: record.uid)
+                                        engine.handleCallAudioStateChanged()
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text(outputPreferences.aecDucking(for: record.uid)
+                                    ? "Enabled (in EQ) — Call audio passes through EQ tap. Safe on headphones where no acoustic feedback exists."
+                                    : "Disabled (Bypass to DAC) — Call audio bypasses directly to hardware to prevent Apple's echo cancellation from ducking voice on speakers.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                        ))
-                        .toggleStyle(.checkbox)
 
-                        Text("Applies parametric EQ filter bands from the selected preset. Enabled by default.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                            // 1b. Enable EQ During Calls
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Enable EQ During Calls", isOn: Binding(
+                                    get: { outputPreferences.enableEQDuringCalls(for: record.uid) },
+                                    set: {
+                                        outputPreferences.setEnableEQDuringCalls($0, for: record.uid)
+                                        engine.updateProcessingConfiguration()
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Toggle("Enable Preamp", isOn: Binding(
-                            get: { outputPreferences.enablePreamp(for: record.uid) },
-                            set: {
-                                outputPreferences.setEnablePreamp($0, for: record.uid)
-                                engine.updateProcessingConfiguration()
+                                Text("Applies parametric EQ filter bands to incoming call audio. Uncheck to run flat pass-through EQ during calls.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                        ))
-                        .toggleStyle(.checkbox)
 
-                        Text("Applies the preset's gain attenuation (prevents digital clipping). Enabled by default.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            // 1c. Enable Preamp During Calls
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Enable Preamp During Calls", isOn: Binding(
+                                    get: { outputPreferences.enablePreampDuringCalls(for: record.uid) },
+                                    set: {
+                                        outputPreferences.setEnablePreampDuringCalls($0, for: record.uid)
+                                        engine.updateProcessingConfiguration()
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text("Preserves the preset's preamp attenuation during calls. Keep enabled on headphones to prevent loud sudden volume blasts.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            // 1d. Background Audio Ducking
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Background Audio Ducking", isOn: Binding(
+                                    get: { outputPreferences.backgroundAudioDucking(for: record.uid) },
+                                    set: { outputPreferences.setBackgroundAudioDucking($0, for: record.uid) }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text("macOS dims background apps (Spotify, YouTube) by -12 dB when your microphone is open. Uncheck to keep background music at full volume.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        Divider()
+
+                        // 2. Audio Hardware
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Audio Hardware")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Mute on sample rate change", isOn: Binding(
+                                    get: { outputPreferences.muteOnRateChange(for: record.uid) },
+                                    set: { outputPreferences.setMuteOnRateChange($0, for: record.uid) }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text("Briefly fades audio for ~300 ms when the DAC switches sample rates (e.g. 44.1 kHz → 96 kHz) to prevent digital chirps. Uncheck if your DAC has hardware muting relays.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        Divider()
+
+                        // 3. Channel Routing & Balance
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Channel Routing & Balance")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+
+                            // Mono downmix
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Mono downmix", isOn: Binding(
+                                    get: { outputPreferences.isMonoDownmix(for: record.uid) },
+                                    set: {
+                                        outputPreferences.setIsMonoDownmix($0, for: record.uid)
+                                        if engine.activeOutput?.uid == record.uid {
+                                            engine.updateChannelRouting()
+                                        }
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text("Sums left and right channels into dual mono for single-earbud listening or checking phase.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            // Swap stereo channels
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Swap stereo channels", isOn: Binding(
+                                    get: { outputPreferences.isChannelSwap(for: record.uid) },
+                                    set: {
+                                        outputPreferences.setIsChannelSwap($0, for: record.uid)
+                                        if engine.activeOutput?.uid == record.uid {
+                                            engine.updateChannelRouting()
+                                        }
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text("Inverts left and right channels for reverse-wired headphone cables or swapped speaker setups.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            // Auto-lock balance to center
+                            VStack(alignment: .leading, spacing: 3) {
+                                Toggle("Auto-lock balance to center", isOn: Binding(
+                                    get: { outputPreferences.autoLockBalance(for: record.uid) },
+                                    set: {
+                                        outputPreferences.setAutoLockBalance($0, for: record.uid)
+                                        if engine.activeOutput?.uid == record.uid {
+                                            balanceLockManager.checkAndResetBalance()
+                                        }
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+
+                                Text("Automatically detects macOS Core Audio volume drift and keeps hardware balance locked at 50/50.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+
+                            // Stereo Balance / Pan Slider
+                            VStack(alignment: .leading, spacing: 4) {
+                                let currentPan = outputPreferences.pan(for: record.uid)
+                                HStack {
+                                    Text("Stereo Balance")
+                                        .font(.caption.weight(.medium))
+                                    Spacer()
+                                    Text(panDescription(for: currentPan))
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                    if abs(currentPan) > 0.001 {
+                                        Button("Reset") {
+                                            outputPreferences.setPan(0.0, for: record.uid)
+                                            if engine.activeOutput?.uid == record.uid {
+                                                engine.updateChannelRouting()
+                                            }
+                                        }
+                                        .font(.caption2)
+                                        .buttonStyle(.borderless)
+                                    }
+                                }
+
+                                HStack(spacing: 8) {
+                                    Text("L")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(.secondary)
+
+                                    Slider(
+                                        value: Binding(
+                                            get: { Double(outputPreferences.pan(for: record.uid)) },
+                                            set: {
+                                                outputPreferences.setPan(Float($0), for: record.uid)
+                                                if engine.activeOutput?.uid == record.uid {
+                                                    engine.updateChannelRouting()
+                                                }
+                                            }
+                                        ),
+                                        in: -1.0...1.0
+                                    )
+
+                                    Text("R")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text("Adjusts stereo balance for this device with zero DSP overhead.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                 }
-
-                Divider()
-
-                // 2. Call & Ducking Rules
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Calls & Ducking")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Toggle("AEC Ducking", isOn: Binding(
-                            get: { outputPreferences.aecDucking(for: record.uid) },
-                            set: {
-                                outputPreferences.setAECDucking($0, for: record.uid)
-                                engine.handleCallAudioStateChanged()
-                            }
-                        ))
-                        .toggleStyle(.checkbox)
-
-                        Text(outputPreferences.aecDucking(for: record.uid)
-                            ? "Enabled (in EQ) — Call audio passes through EQ tap. Safe on headphones where no acoustic feedback exists."
-                            : "Disabled (Bypass to DAC) — Call audio bypasses directly to hardware to prevent Apple's echo cancellation from ducking voice on speakers.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    VStack(alignment: .leading, spacing: 3) {
-                        Toggle("Background Audio Ducking", isOn: Binding(
-                            get: { outputPreferences.backgroundAudioDucking(for: record.uid) },
-                            set: { outputPreferences.setBackgroundAudioDucking($0, for: record.uid) }
-                        ))
-                        .toggleStyle(.checkbox)
-
-                        Text("macOS dims background apps (Spotify, YouTube) by -12 dB when your microphone is open. Uncheck to disable ducking.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+                .padding(16)
             }
-            .padding(16)
-            .frame(width: 330)
+            .frame(width: 340)
+            .frame(maxHeight: 520)
+        }
+    }
+
+    private func panDescription(for pan: Float) -> String {
+        let percent = Int(round(abs(pan) * 100))
+        if percent == 0 {
+            return "Center"
+        } else if pan < 0 {
+            return "\(percent)% Left"
+        } else {
+            return "\(percent)% Right"
         }
     }
 }
