@@ -100,7 +100,8 @@ final class EQEngine: ObservableObject {
         
         let activeMics = voipMonitor?.activeMicBundleIDs ?? []
         let registeredVoip = VoIPAppsStore.shared.voipBundleIDs
-        let allCallApps = registeredVoip.union(activeMics)
+        let ownBundleID = Bundle.main.bundleIdentifier ?? "app.anmol.anmolAudio"
+        let allCallApps = registeredVoip.union(activeMics).filter { $0 != ownBundleID && $0 != "app.anmol.anmolAudio" }
 
         // Dedicated macOS call audio daemons (no GUI, active during telephony)
         let dedicatedCallDaemons: Set<String> = [
@@ -499,6 +500,7 @@ final class EQEngine: ObservableObject {
             // Safety fallback: ensure preamp is clamped safely
             eqProcessor.setPreamp(dB: 0.0)
         }
+        eqProcessor.reset()
         spectrumAnalyzer.reset()
         spectrumAnalyzer.configure(sampleRate: tapSampleRate)
         clipMeter.reset()
@@ -582,7 +584,7 @@ final class EQEngine: ObservableObject {
     private func scheduleStartupFadeIn(halSR: Double) {
         pendingStartFadeInWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 guard self.isRunning else { return }
                 let sr = self.halSampleRate ?? halSR
@@ -627,7 +629,7 @@ final class EQEngine: ObservableObject {
 
         pendingStopWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self else { completion?(); return }
                 self.finishStopSynchronously()
                 completion?()
@@ -719,7 +721,7 @@ final class EQEngine: ObservableObject {
     private func scheduleTapTargetCheck() {
         pendingTapTargetCheck?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.refreshTapTargetsIfNeeded()
             }
         }
@@ -857,7 +859,7 @@ final class EQEngine: ObservableObject {
         ringBuffer.setOutputGain(0, rampFrames: Int(Self.deviceRateFadeOutSeconds * sr))
 
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 guard self.isRunning else { return }
                 let srNow = self.halSampleRate ?? 48000
@@ -884,7 +886,7 @@ final class EQEngine: ObservableObject {
         lastPlaybackFrames = clipMeter.snapshot().framesProcessed
         lastSignalAt = .distantPast
         let timer = Timer(timeInterval: Self.diagnosticInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 self.pollPlayback()
                 self.logDiagnosticSnapshot()
@@ -1013,7 +1015,7 @@ final class EQEngine: ObservableObject {
         ringBuffer.setOutputGain(0, rampFrames: Int(Self.fadeOutSeconds * sr))
         pendingRestart?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self else { return }
                 guard self.isRunning, let output = self.activeOutput else { return }
                 // SR changed: the input AU's client format is stale, so a fast-path

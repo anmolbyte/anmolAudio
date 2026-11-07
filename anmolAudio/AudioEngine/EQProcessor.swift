@@ -55,6 +55,14 @@ final class EQProcessor {
 
     private(set) var sampleRate: Double = 48_000
 
+    // Hangover-protected silence gate for the audio thread.
+    // When input is digital silence, allows 30 blocks (~300 ms @ 512 frames)
+    // for the IIR biquad resonant tails to ring down naturally to zero.
+    // Once decayed, we flush denormals and bypass DSP processing completely
+    // until non-zero audio arrives, eliminating 32 biquads per channel on silence.
+    private var consecutiveSilentBlocks: Int = 0
+    private let silentHangoverBlocks: Int = 30
+
     init() {
         // Build initial passthrough cascades so the audio thread can run even before the
         // first configure() call lands.
@@ -112,11 +120,15 @@ final class EQProcessor {
                 // across the swap so the transition is click-free for non-pathological
                 // preset pairs — same property the editor's preset-switch already relies on.
                 if pendingActiveSlot != appliedActiveSlot {
-                    let coeffs = slotCoefficients[pendingActiveSlot]
-                    cascadeL.setCoefficients(coeffs)
-                    cascadeR.setCoefficients(coeffs)
+                    if pendingActiveSlot >= 0 && pendingActiveSlot < slotCoefficients.count {
+                        let coeffs = slotCoefficients[pendingActiveSlot]
+                        cascadeL.setCoefficients(coeffs)
+                        cascadeR.setCoefficients(coeffs)
+                        appliedActiveSlot = pendingActiveSlot
+                    }
+                }
+                if pendingActiveSlot >= 0 && pendingActiveSlot < slotPreampsLinear.count {
                     preampLinear = slotPreampsLinear[pendingActiveSlot]
-                    appliedActiveSlot = pendingActiveSlot
                 }
                 coefficientsDirty = false
             } else {
@@ -131,25 +143,66 @@ final class EQProcessor {
             os_unfair_lock_unlock(&lock)
         }
 
-        var gain = preampLinear
-        if gain != 1.0 {
-            vDSP_vsmul(left, 1, &gain, left, 1, vDSP_Length(frames))
-            vDSP_vsmul(right, 1, &gain, right, 1, vDSP_Length(frames))
-        }
-        cascadeL.process(left, frames: frames)
-        cascadeR.process(right, frames: frames)
+        var peakL: Float = 0
+        var peakR: Float = 0
+        vDSP_maxmgv(left, 1, &peakL, vDSP_Length(frames))
+        vDSP_maxmgv(right, 1, &peakR, vDSP_Length(frames))
+        let isSilent = max(peakL, peakR) < 1e-7
 
-        // Post-cascade mute. Scaling here (rather than zeroing the pre-cascade
-        // gain) means the IIR delay lines keep running on real audio, so unmute
-        // is glitch-free — the cascades have been computing as usual the whole time.
-        if muteLinear != 1.0 {
-            var m = muteLinear
-            vDSP_vsmul(left, 1, &m, left, 1, vDSP_Length(frames))
-            vDSP_vsmul(right, 1, &m, right, 1, vDSP_Length(frames))
+        if isSilent {
+            if consecutiveSilentBlocks < silentHangoverBlocks {
+                consecutiveSilentBlocks += 1
+                var gain = preampLinear
+                if gain != 1.0 {
+                    vDSP_vsmul(left, 1, &gain, left, 1, vDSP_Length(frames))
+                    vDSP_vsmul(right, 1, &gain, right, 1, vDSP_Length(frames))
+                }
+                cascadeL.process(left, frames: frames)
+                cascadeR.process(right, frames: frames)
+                if muteLinear != 1.0 {
+                    var m = muteLinear
+                    vDSP_vsmul(left, 1, &m, left, 1, vDSP_Length(frames))
+                    vDSP_vsmul(right, 1, &m, right, 1, vDSP_Length(frames))
+                }
+                if consecutiveSilentBlocks == silentHangoverBlocks {
+                    cascadeL.reset()
+                    cascadeR.reset()
+                }
+            } else {
+                // Steady-state silence: input is 0 and delay lines are 0.
+                // Left and right are already 0 from the tap. Skip biquad cascade completely.
+                return
+            }
+        } else {
+            consecutiveSilentBlocks = 0
+            var gain = preampLinear
+            if gain != 1.0 {
+                vDSP_vsmul(left, 1, &gain, left, 1, vDSP_Length(frames))
+                vDSP_vsmul(right, 1, &gain, right, 1, vDSP_Length(frames))
+            }
+            cascadeL.process(left, frames: frames)
+            cascadeR.process(right, frames: frames)
+
+            // Post-cascade mute. Scaling here (rather than zeroing the pre-cascade
+            // gain) means the IIR delay lines keep running on real audio, so unmute
+            // is glitch-free — the cascades have been computing as usual the whole time.
+            if muteLinear != 1.0 {
+                var m = muteLinear
+                vDSP_vsmul(left, 1, &m, left, 1, vDSP_Length(frames))
+                vDSP_vsmul(right, 1, &m, right, 1, vDSP_Length(frames))
+            }
         }
     }
 
     // MARK: - Helpers
+
+    func reset() {
+        os_unfair_lock_lock(&lock)
+        cascadeL.reset()
+        cascadeR.reset()
+        consecutiveSilentBlocks = 0
+        os_unfair_lock_unlock(&lock)
+    }
 
     private func publish(coefficients: [Double], preampDB: Float) {
         // Preamp only ever attenuates; clamp to 0 dB ceiling to prevent digital clipping/blasts
@@ -166,6 +219,7 @@ final class EQProcessor {
         pendingActiveSlot = 0
         appliedActiveSlot = -1
         pendingMuteLinear = 1.0
+        consecutiveSilentBlocks = 0
         os_unfair_lock_unlock(&lock)
     }
 
@@ -236,8 +290,8 @@ final class EQProcessor {
         let linear = pow(10.0, safeDB / 20.0)
         os_unfair_lock_lock(&lock)
         pendingPreampLinear = linear
-        if !slotPreampsLinear.isEmpty {
-            // Also update slot B if slot mode is active
+        if !slotPreampsLinear.isEmpty && pendingActiveSlot >= 0 && pendingActiveSlot < slotPreampsLinear.count {
+            // Also update active slot if slot mode is active
             slotPreampsLinear[pendingActiveSlot] = linear
         }
         os_unfair_lock_unlock(&lock)

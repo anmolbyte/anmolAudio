@@ -55,8 +55,10 @@ final class ProcessTapInput {
 
     private let maxSlots = 64
     private let rtSlots: UnsafeMutablePointer<RTAppSlot>
+    private var slotLock = os_unfair_lock()
     private var slotCount: Int = 0
     private var slotBundleIDs: [String?] = []
+    private var processesByBundleID: [String: [AudioObjectID]] = [:]
 
     /// Index of the first buffer that belongs to the tap in the aggregate's input
     /// AudioBufferList. The list is laid out as
@@ -147,20 +149,21 @@ final class ProcessTapInput {
             }
         }
 
-        // Dedicated taps for each detected GUI app so each app has its own isolated peak meter
-        // and can have its gain adjusted dynamically without rebuilding the tap.
-        var customBundleIDs = Array(processesByBundleID.keys).sorted()
-        if customBundleIDs.count >= maxSlots {
-            customBundleIDs = Array(customBundleIDs.prefix(maxSlots - 1))
-        }
-
-        // Neutral processes: unbundled daemons + any apps beyond maxSlots
+        // Dedicated taps are ONLY created for apps with customized volume or mute state.
+        // All neutral apps (100% volume, unmuted) bundle into Tap 0 for zero-overhead,
+        // bit-perfect capture with no Core Audio drift-compensation threads in coreaudiod.
+        var customBundleIDs: [String] = []
         var neutralProcesses: [AudioObjectID] = unbundledProcesses
+
         for (bid, procs) in processesByBundleID {
-            if !customBundleIDs.contains(bid) {
+            let isCustom = appVolumes[bid].map { !$0.isNeutral } ?? false
+            if isCustom && customBundleIDs.count < (maxSlots - 1) {
+                customBundleIDs.append(bid)
+            } else {
                 neutralProcesses.append(contentsOf: procs)
             }
         }
+        customBundleIDs.sort()
 
         log.info("Tap targets: valid=\(validProcesses.count) neutral=\(neutralProcesses.count) customApps=\(customBundleIDs.count) excludedByUser=\(excludedCount)")
 
@@ -220,8 +223,9 @@ final class ProcessTapInput {
             var newTapID: AudioObjectID = 0
             let tapStatus = AudioHardwareCreateProcessTap(desc, &newTapID)
             if tapStatus != noErr {
-                for t in newTapIDs { AudioHardwareDestroyProcessTap(t) }
-                throw CoreAudioError.osStatus(tapStatus, "AudioHardwareCreateProcessTap (\(bid))")
+                // If a process terminated mid-enumeration, do not abort the entire engine; skip this app's tap.
+                log.warning("AudioHardwareCreateProcessTap failed for \(bid) (status: \(tapStatus)); skipping process.")
+                continue
             }
             newTapIDs.append(newTapID)
             tapListEntries.append([
@@ -236,6 +240,10 @@ final class ProcessTapInput {
         }
 
         guard !newTapIDs.isEmpty else {
+            for t in oldTapIDs { AudioHardwareDestroyProcessTap(t) }
+            if oldDeviceID != 0 { AudioHardwareDestroyAggregateDevice(oldDeviceID) }
+            self.tapIDs.removeAll()
+            self.deviceID = 0
             throw CoreAudioError.noProcessesToTap
         }
 
@@ -271,6 +279,7 @@ final class ProcessTapInput {
         // 30 ms exponential gain smoothing coefficient
         let rampCoeff = 1.0 - exp(-1.0 / (Float(sampleRate) * 0.030))
 
+        os_unfair_lock_lock(&slotLock)
         self.slotCount = newTapIDs.count
         self.slotBundleIDs = newSlotBundleIDs
         for i in 0..<newTapIDs.count {
@@ -283,11 +292,13 @@ final class ProcessTapInput {
                 peakLevel: 0.0
             )
         }
+        os_unfair_lock_unlock(&slotLock)
 
         self.tapIDs = newTapIDs
         self.deviceID = newAggregateID
         self.tappedProcessObjects = Set(validProcesses)
         self.tapBufferStartIndex = Self.inputBufferCount(of: mainSubDevice.id)
+        self.processesByBundleID = processesByBundleID
 
         // Seamless handoff: teardown previous taps & aggregate now that the new taps are active.
         if oldDeviceID != 0 {
@@ -310,6 +321,8 @@ final class ProcessTapInput {
     /// Dynamically update the live gain for a currently tapped application without restarting the engine.
     /// Threading: Called from the main actor. Modifies atomic variables read by the real-time audio thread.
     func setLiveGain(bundleID: String, gain: Float, isMuted: Bool) {
+        os_unfair_lock_lock(&slotLock)
+        defer { os_unfair_lock_unlock(&slotLock) }
         for i in 0..<slotCount {
             if slotBundleIDs[i] == bundleID {
                 rtSlots[i].targetGain = max(0.0, min(2.0, gain))
@@ -323,15 +336,26 @@ final class ProcessTapInput {
     /// Returns 0.0 if metering is inactive or the app is silent.
     func peakLevel(for bundleID: String) -> Float {
         guard isMeteringActive else { return 0.0 }
+        guard os_unfair_lock_trylock(&slotLock) else { return 0.0 }
+        defer { os_unfair_lock_unlock(&slotLock) }
+
+        // 1. Check dedicated tap slot (custom volume / muted apps)
         for i in 0..<slotCount {
             if slotBundleIDs[i] == bundleID {
                 return rtSlots[i].peakLevel
             }
         }
-        // Fallback to slot 0 if slot 0 is the aggregate main tap
+
+        // 2. Neutral apps sharing Tap 0: Only attribute Tap 0's peak if this specific
+        // app actually has an active output IOProc running (kAudioProcessPropertyIsRunningOutput).
+        // This ensures Spotify playing never makes silent apps like Mail or Safari bounce.
         if slotCount > 0 && slotBundleIDs[0] == nil {
-            return rtSlots[0].peakLevel
+            if let procs = processesByBundleID[bundleID],
+               procs.contains(where: { AudioProcessInfo.isRunningOutput($0) }) {
+                return rtSlots[0].peakLevel
+            }
         }
+
         return 0.0
     }
 
@@ -346,12 +370,14 @@ final class ProcessTapInput {
         self.frameHandler = frameHandler
 
         var newProcID: AudioDeviceIOProcID?
+        let clientData = Unmanaged.passUnretained(self).toOpaque()
         let createStatus = AudioDeviceCreateIOProcIDWithBlock(
             &newProcID,
             deviceID,
             nil
-        ) { [weak self] _, inInputData, _, _, _ in
-            self?.handle(inputData: inInputData)
+        ) { _, inInputData, _, _, _ in
+            let me = Unmanaged<ProcessTapInput>.fromOpaque(clientData).takeUnretainedValue()
+            me.handle(inputData: inInputData)
         }
         if createStatus != noErr {
             throw CoreAudioError.osStatus(createStatus, "AudioDeviceCreateIOProcIDWithBlock")
@@ -433,30 +459,37 @@ final class ProcessTapInput {
         let r = rightScratch
         let isMetering = isMeteringActive
 
+        // Single non-blocking trylock for the entire callback slice
+        let acquiredLock = os_unfair_lock_trylock(&slotLock)
+
         // Sum each tap buffer into scratch with smooth gain ramping
         for s in 0..<count {
             let buffer = abl[start + s]
             guard let raw = buffer.mData else { continue }
-            let interleaved = raw.assumingMemoryBound(to: Float.self)
             let bChannels = Int(buffer.mNumberChannels)
             guard bChannels >= 1 else { continue }
 
+            let availableFloats = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+            let subFrames = min(frames, availableFloats / bChannels)
+            guard subFrames > 0 else { continue }
+
+            let interleaved = raw.assumingMemoryBound(to: Float.self)
             let slotPtr = rtSlots.advanced(by: s)
             let isMuted = slotPtr.pointee.isMuted
             let targetGain: Float = isMuted ? 0.0 : slotPtr.pointee.targetGain
             var currentGain = slotPtr.pointee.currentGain
             let ramp = slotPtr.pointee.rampCoefficient
+            let isNeutral = slotPtr.pointee.isNeutral
+            let prevPeak = slotPtr.pointee.peakLevel
 
             // Compute peak amplitude if UI metering is currently active (0% overhead when closed)
             if isMetering {
                 var rawPeak: Float = 0.0
-                let sampleCount = vDSP_Length(frames * bChannels)
+                let sampleCount = vDSP_Length(subFrames * bChannels)
                 vDSP_maxmgv(interleaved, 1, &rawPeak, sampleCount)
-                let prev = slotPtr.pointee.peakLevel
-                if rawPeak >= prev {
-                    slotPtr.pointee.peakLevel = rawPeak
-                } else {
-                    slotPtr.pointee.peakLevel = prev * 0.82 // ~250ms decay
+                let newPeak = (rawPeak >= prevPeak) ? rawPeak : (prevPeak * 0.82) // ~250ms decay
+                if acquiredLock {
+                    slotPtr.pointee.peakLevel = newPeak
                 }
             }
 
@@ -466,17 +499,29 @@ final class ProcessTapInput {
             }
 
             // Fast path for steady-state unity gain
-            if slotPtr.pointee.isNeutral && abs(targetGain - 1.0) < 1e-4 && abs(currentGain - 1.0) < 1e-4 {
-                if bChannels >= 2 {
-                    for i in 0..<frames {
-                        l[i] += interleaved[i * bChannels]
-                        r[i] += interleaved[i * bChannels + 1]
+            if isNeutral && abs(targetGain - 1.0) < 1e-4 && abs(currentGain - 1.0) < 1e-4 {
+                if s == 0 {
+                    if bChannels >= 2 {
+                        for i in 0..<subFrames {
+                            l[i] = interleaved[i * bChannels]
+                            r[i] = interleaved[i * bChannels + 1]
+                        }
+                    } else {
+                        memcpy(l, interleaved, subFrames * MemoryLayout<Float>.stride)
+                        memcpy(r, interleaved, subFrames * MemoryLayout<Float>.stride)
                     }
                 } else {
-                    for i in 0..<frames {
-                        let mono = interleaved[i]
-                        l[i] += mono
-                        r[i] += mono
+                    if bChannels >= 2 {
+                        for i in 0..<subFrames {
+                            l[i] += interleaved[i * bChannels]
+                            r[i] += interleaved[i * bChannels + 1]
+                        }
+                    } else {
+                        for i in 0..<subFrames {
+                            let mono = interleaved[i]
+                            l[i] += mono
+                            r[i] += mono
+                        }
                     }
                 }
                 continue
@@ -484,13 +529,13 @@ final class ProcessTapInput {
 
             // Ramped gain path for customized volume apps
             if bChannels >= 2 {
-                for i in 0..<frames {
+                for i in 0..<subFrames {
                     currentGain += ramp * (targetGain - currentGain)
                     l[i] += interleaved[i * bChannels] * currentGain
                     r[i] += interleaved[i * bChannels + 1] * currentGain
                 }
             } else {
-                for i in 0..<frames {
+                for i in 0..<subFrames {
                     currentGain += ramp * (targetGain - currentGain)
                     let mono = interleaved[i] * currentGain
                     l[i] += mono
@@ -502,6 +547,10 @@ final class ProcessTapInput {
                 currentGain = targetGain
             }
             slotPtr.pointee.currentGain = currentGain
+        }
+
+        if acquiredLock {
+            os_unfair_lock_unlock(&slotLock)
         }
 
         handler(l, r, frames)

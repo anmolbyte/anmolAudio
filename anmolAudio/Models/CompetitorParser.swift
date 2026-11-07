@@ -17,23 +17,35 @@ struct CompetitorParser {
         
         var parsedBands: [EQBand] = []
         for b in bandsArray {
-            let freq = (b["frequency"] as? NSNumber ?? b["freq"] as? NSNumber)?.floatValue ?? 0.0
-            let gain = (b["gain"] as? NSNumber)?.floatValue ?? 0.0
-            let q = (b["q"] as? NSNumber ?? b["Q"] as? NSNumber)?.floatValue ?? 0.71
-            let typeString = (b["type"] as? String)?.lowercased() ?? "peak"
-            
-            var filterType: EQBand.FilterType = .peak
-            if typeString.contains("lowshelf") || typeString.contains("low_shelf") || typeString.contains("low shelf") || typeString == "lsc" || typeString == "ls" || (typeString.contains("low") && !typeString.contains("pass")) {
+            let rawFreq = (b["frequency"] as? NSNumber ?? b["freq"] as? NSNumber)?.floatValue ?? 0.0
+            let rawGain = (b["gain"] as? NSNumber)?.floatValue ?? 0.0
+            let rawQ = (b["q"] as? NSNumber ?? b["Q"] as? NSNumber)?.floatValue ?? 0.71
+            let typeString = (b["type"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "peak"
+
+            guard rawFreq.isFinite, rawGain.isFinite, rawQ.isFinite,
+                  rawFreq >= 10.0, rawFreq <= 22000.0, rawQ > 0.001 else {
+                continue
+            }
+
+            let filterType: EQBand.FilterType
+            switch typeString {
+            case "lowshelf", "low_shelf", "low shelf", "lsc", "ls":
                 filterType = .lowShelf
-            } else if typeString.contains("highshelf") || typeString.contains("high_shelf") || typeString.contains("high shelf") || typeString == "hsc" || typeString == "hs" || (typeString.contains("high") && !typeString.contains("pass")) {
+            case "highshelf", "high_shelf", "high shelf", "hsc", "hs":
                 filterType = .highShelf
-            } else {
+            case "peak", "pk", "peaking", "bell":
                 filterType = .peak
+            default:
+                if typeString.hasPrefix("low") && !typeString.contains("pass") {
+                    filterType = .lowShelf
+                } else if typeString.hasPrefix("high") && !typeString.contains("pass") {
+                    filterType = .highShelf
+                } else {
+                    filterType = .peak
+                }
             }
-            
-            if freq > 0 {
-                parsedBands.append(EQBand(type: filterType, frequency: freq, gain: gain, q: q))
-            }
+
+            parsedBands.append(EQBand(type: filterType, frequency: rawFreq, gain: rawGain, q: rawQ))
         }
         
         guard !parsedBands.isEmpty else { return nil }

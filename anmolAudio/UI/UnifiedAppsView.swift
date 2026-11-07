@@ -9,8 +9,10 @@ struct UnifiedAppsView: View {
     @ObservedObject var appVolumeStore: AppVolumeStore
 
     @State private var runningApps: [AudioProcessInfo.App] = []
+    @ObservedObject private var tracker = OpenedAppsTracker.shared
     @State private var processListListener: AudioProcessListChangeListener?
     @State private var filter: String = ""
+    @State private var allRows: [Row] = []
     @State private var showCallModeHelp: Bool = false
     @FocusState private var filterFocused: Bool
 
@@ -21,10 +23,21 @@ struct UnifiedAppsView: View {
         let isRunning: Bool
     }
 
-    private var rows: [Row] {
+    private var filteredRows: [Row] {
+        let needle = filter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return allRows }
+        return allRows.filter { row in
+            row.displayName.localizedCaseInsensitiveContains(needle)
+                || row.bundleID.localizedCaseInsensitiveContains(needle)
+        }
+    }
+
+    private func rebuildRows() {
         var seen = Set<String>()
         var result: [Row] = []
-        for app in runningApps {
+
+        // 1. Core Audio specific entries (like System Sounds)
+        for app in runningApps where app.bundleID == "systemsoundserverd" {
             seen.insert(app.bundleID)
             result.append(Row(
                 bundleID: app.bundleID,
@@ -32,10 +45,27 @@ struct UnifiedAppsView: View {
                 isRunning: true
             ))
         }
+
+        // 2. Every single GUI application that has been opened on this Mac (excluding uninstalled apps)
+        for item in tracker.openedApps {
+            guard !seen.contains(item.bundleID) else { continue }
+            seen.insert(item.bundleID)
+            result.append(Row(
+                bundleID: item.bundleID,
+                displayName: item.displayName,
+                isRunning: item.isRunning
+            ))
+        }
+
+        // 3. Any additional previously configured apps that are still installed
         let orphans = excludedAppsStore.excludedBundleIDs
             .union(voipAppsStore.voipBundleIDs)
             .union(appVolumeStore.volumes.keys)
             .subtracting(seen)
+            .filter { bid in
+                guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) else { return false }
+                return FileManager.default.fileExists(atPath: url.path)
+            }
             .map { bundleID in
                 Row(
                     bundleID: bundleID,
@@ -45,16 +75,8 @@ struct UnifiedAppsView: View {
             }
             .sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }
         result.append(contentsOf: orphans)
-        return applyFilter(result)
-    }
 
-    private func applyFilter(_ all: [Row]) -> [Row] {
-        let needle = filter.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else { return all }
-        return all.filter { row in
-            row.displayName.localizedCaseInsensitiveContains(needle)
-                || row.bundleID.localizedCaseInsensitiveContains(needle)
-        }
+        allRows = result
     }
 
     var body: some View {
@@ -143,8 +165,8 @@ struct UnifiedAppsView: View {
                         .padding(.top, 4)
 
                         // List
-                        VStack(spacing: 4) {
-                            ForEach(rows) { row in
+                        LazyVStack(spacing: 4) {
+                            ForEach(filteredRows) { row in
                                 AppRowView(
                                     row: row,
                                     isBypassed: excludedAppsStore.contains(row.bundleID),
@@ -179,9 +201,28 @@ struct UnifiedAppsView: View {
         }
         .task {
             refreshRunningApps()
+            rebuildRows()
             processListListener = AudioProcessListChangeListener { [self] in
-                Task { @MainActor in self.refreshRunningApps() }
+                Task { @MainActor in
+                    self.refreshRunningApps()
+                    self.rebuildRows()
+                }
             }
+        }
+        .onReceive(tracker.$openedApps) { _ in
+            rebuildRows()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification)) { notification in
+            if let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+               let bid = app.bundleIdentifier {
+                tracker.recordAppOpened(bundleID: bid)
+            }
+            refreshRunningApps()
+            rebuildRows()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)) { _ in
+            refreshRunningApps()
+            rebuildRows()
         }
     }
 
@@ -195,7 +236,7 @@ struct UnifiedAppsView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text("\(rows.count) app\(rows.count == 1 ? "" : "s") detected • \(excludedAppsStore.excludedBundleIDs.count) bypassed")
+            Text("\(filteredRows.count) app\(filteredRows.count == 1 ? "" : "s") detected • \(excludedAppsStore.excludedBundleIDs.count) bypassed")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -265,7 +306,12 @@ struct UnifiedAppsView: View {
             alert.runModal()
             return
         }
-        excludedAppsStore.set(bundleID, excluded: true)
+        tracker.recordAppOpened(bundleID: bundleID)
+        if appVolumeStore.volumes[bundleID] == nil {
+            appVolumeStore.setVolume(1.0, for: bundleID)
+        }
+        refreshRunningApps()
+        rebuildRows()
     }
 }
 

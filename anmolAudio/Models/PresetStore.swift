@@ -431,9 +431,11 @@ final class PresetStore: ObservableObject {
             log.error("Coordinator failed to read presets.json: \(String(describing: coordError))")
         }
         guard let data = readData else {
-            log.error("Failed to read presets.json. Falling back to Flat.")
-            presets = [EQPreset.flat]
-            lastKnownHash = 0
+            log.error("Failed to read presets.json. Retaining existing in-memory presets.")
+            if presets.isEmpty {
+                presets = [EQPreset.flat]
+                lastKnownHash = 0
+            }
             return
         }
         let hash = data.hashValue
@@ -448,9 +450,11 @@ final class PresetStore: ObservableObject {
             lastKnownHash = hash
             log.info("Loaded \(decoded.count) presets from \(self.locationKind.rawValue)")
         } catch {
-            log.error("Failed to decode presets.json: \(String(describing: error)). Falling back to Flat.")
-            presets = [EQPreset.flat]
-            lastKnownHash = 0
+            log.error("Failed to decode presets.json: \(String(describing: error)). Retaining existing in-memory presets.")
+            if presets.isEmpty {
+                presets = [EQPreset.flat]
+                lastKnownHash = 0
+            }
         }
     }
 

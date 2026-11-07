@@ -90,13 +90,9 @@ final class StereoResampler {
     /// if the rate already matches and a converter exists. Called from the
     /// main thread on tap-rate change.
     func configure(inputSampleRate: Double) {
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
         if inputSampleRate == self.inputSampleRate, converter != nil { return }
-        if let c = converter {
-            AudioConverterDispose(c)
-            converter = nil
-        }
+
+        // Build new AudioConverter outside the lock so the real-time audio thread never blocks.
         var inDesc = Self.stereoFloat32ASBD(sampleRate: inputSampleRate)
         var outDesc = Self.stereoFloat32ASBD(sampleRate: outputSampleRate)
         var newConverter: AudioConverterRef?
@@ -105,13 +101,7 @@ final class StereoResampler {
             log.error("AudioConverterNew failed: \(status) (\(Int(inputSampleRate)) → \(Int(self.outputSampleRate)))")
             return
         }
-        // High-quality (not mastering) polyphase SRC. Mastering complexity at
-        // Max quality is the most CPU-intensive converter Core Audio offers and
-        // it ran on every buffer — even silence — which was a major contributor
-        // to high idle CPU (issue #101). For a real-time headphone-monitoring
-        // path, Normal complexity at High quality is audibly transparent at a
-        // fraction of the cost. (Most buffers now skip the converter entirely
-        // via the 1:1 passthrough in `processIntoRingBuffer` anyway.)
+
         var quality: UInt32 = kAudioConverterQuality_High
         _ = AudioConverterSetProperty(
             newConverter!,
@@ -126,8 +116,17 @@ final class StereoResampler {
             UInt32(MemoryLayout<UInt32>.size),
             &complexity
         )
-        converter = newConverter
+
+        var oldConverter: AudioConverterRef?
+        os_unfair_lock_lock(&lock)
+        oldConverter = self.converter
+        self.converter = newConverter
         self.inputSampleRate = inputSampleRate
+        os_unfair_lock_unlock(&lock)
+
+        if let old = oldConverter {
+            AudioConverterDispose(old)
+        }
         log.info("Resampler configured: \(Int(inputSampleRate)) → \(Int(self.outputSampleRate))")
     }
 
@@ -180,7 +179,8 @@ final class StereoResampler {
         inRight: UnsafePointer<Float>,
         inFrames: Int
     ) -> Int {
-        os_unfair_lock_lock(&lock)
+        // Never block the real-time audio thread; if configure() is mid-swap, skip this buffer.
+        guard os_unfair_lock_trylock(&lock) else { return 0 }
         defer { os_unfair_lock_unlock(&lock) }
         guard let converter, inFrames > 0 else { return 0 }
 

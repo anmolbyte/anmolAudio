@@ -90,11 +90,13 @@ struct FixedWidthPopUp: NSViewRepresentable {
         let id: String
         let title: String
         let isSeparator: Bool
+        let isEnabled: Bool
 
-        init(id: String, title: String, isSeparator: Bool = false) {
+        init(id: String, title: String, isSeparator: Bool = false, isEnabled: Bool = true) {
             self.id = id
             self.title = title
             self.isSeparator = isSeparator
+            self.isEnabled = isEnabled
         }
     }
 
@@ -137,12 +139,12 @@ struct FixedWidthPopUp: NSViewRepresentable {
     func updateNSView(_ button: NSPopUpButton, context: Context) {
         context.coordinator.parent = self
 
-        // Signature includes both item titles and action titles so toggling
-        // actions on/off rebuilds the menu. Separator items are serialized to a
-        // sentinel so they participate in the comparison.
-        let signature = items.map { $0.isSeparator ? "__sep__" : $0.title } + ["__sep__"] + actions.map(\.title)
+        // Signature includes item titles, enablement, and action titles so toggling
+        // actions on/off or enabling/disabling items rebuilds the menu. Separator items
+        // are serialized to a sentinel so they participate in the comparison.
+        let signature = items.map { $0.isSeparator ? "__sep__" : "\($0.title)_\($0.isEnabled)" } + ["__sep__"] + actions.map(\.title)
         let existing = button.itemArray.map { item in
-            item.isSeparatorItem ? "__sep__" : item.title
+            item.isSeparatorItem ? "__sep__" : "\(item.title)_\(item.isEnabled)"
         }
         if signature != existing {
             button.removeAllItems()
@@ -153,7 +155,7 @@ struct FixedWidthPopUp: NSViewRepresentable {
                 }
                 let menuItem = NSMenuItem(title: item.title, action: nil, keyEquivalent: "")
                 menuItem.representedObject = item.id
-                menuItem.isEnabled = true
+                menuItem.isEnabled = item.isEnabled
                 button.menu?.addItem(menuItem)
             }
             if !actions.isEmpty {

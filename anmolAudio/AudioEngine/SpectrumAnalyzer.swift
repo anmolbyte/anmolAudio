@@ -20,6 +20,10 @@ final class SpectrumAnalyzer {
     private var lock = os_unfair_lock()
     private(set) var sampleRate: Double = 48_000
 
+    /// When false (editor window closed or hidden), the real-time audio thread
+    /// skips ring-buffer copying and averaging entirely (0% audio thread overhead).
+    var isActive: Bool = false
+
     // FFT setup and pre-computed Hann window.
     private let log2n: vDSP_Length
     private let fftSetup: FFTSetup
@@ -67,6 +71,7 @@ final class SpectrumAnalyzer {
     /// thread — a dropped submission means the next callback's samples overwrite
     /// the same span, which the snapshot reader can't tell apart from normal flow.
     func submit(left: UnsafePointer<Float>, right: UnsafePointer<Float>, frames: Int) {
+        guard isActive else { return }
         guard os_unfair_lock_trylock(&lock) else { return }
         defer { os_unfair_lock_unlock(&lock) }
 

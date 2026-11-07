@@ -407,6 +407,9 @@ private struct MenuBarLabel: View {
             .onChange(of: outputPreferences.callHandlingMode) { _, _ in
                 engine.reEnumerateTapTargets()
             }
+            .onChange(of: engine.isRunning, initial: true) { _, running in
+                voipMonitor.setEngineRunning(running)
+            }
     }
 
     private func runLaunchCoordinator() {
@@ -497,7 +500,7 @@ final class DockPresence {
     static let shared = DockPresence()
 
     private var openWindows: Set<ObjectIdentifier> = []
-    private var observedWindows: Set<ObjectIdentifier> = []
+    private var observerTokens: [ObjectIdentifier: [NSObjectProtocol]] = [:]
 
     private init() {}
 
@@ -507,25 +510,30 @@ final class DockPresence {
     func register(_ window: NSWindow) {
         let id = ObjectIdentifier(window)
 
-        if observedWindows.insert(id).inserted {
-            NotificationCenter.default.addObserver(
+        if observerTokens[id] == nil {
+            let closeToken = NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification,
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.markClosed(id) }
+                MainActor.assumeIsolated {
+                    self?.markClosed(id)
+                }
             }
             // Reopening a SwiftUI Window after a close reuses the same
             // NSWindow but doesn't necessarily re-run our SwiftUI hook —
             // catch the reopen via didBecomeKey, which fires when the
             // restored window becomes key.
-            NotificationCenter.default.addObserver(
+            let keyToken = NotificationCenter.default.addObserver(
                 forName: NSWindow.didBecomeKeyNotification,
                 object: window,
                 queue: .main
             ) { [weak self] _ in
-                Task { @MainActor in self?.markOpen(id) }
+                MainActor.assumeIsolated {
+                    self?.markOpen(id)
+                }
             }
+            observerTokens[id] = [closeToken, keyToken]
         }
 
         if window.isVisible && !window.isMiniaturized {
@@ -539,6 +547,9 @@ final class DockPresence {
     }
 
     private func markClosed(_ id: ObjectIdentifier) {
+        if let tokens = observerTokens.removeValue(forKey: id) {
+            tokens.forEach { NotificationCenter.default.removeObserver($0) }
+        }
         guard openWindows.remove(id) != nil else { return }
         updatePolicy()
     }

@@ -31,23 +31,28 @@ enum AudioCapturePermission {
 
     /// Returns the current permission status without prompting the user.
     static func preflight() -> Status {
+        if let fn = preflightSPI {
+            let result = fn("kTCCServiceAudioCapture" as CFString, nil)
+            // TCCAccessPreflight: 0 = authorized, 1 = not determined / prompt needed, 2 = denied.
+            log.debug("TCCAccessPreflight(kTCCServiceAudioCapture) = \(result, privacy: .public)")
+            switch result {
+            case 0:
+                return .authorized
+            case 1:
+                return canCreateTap() ? .authorized : .unknown
+            case 2:
+                return canCreateTap() ? .authorized : .denied
+            default:
+                break
+            }
+        } else {
+            log.warning("TCCAccessPreflight SPI not available")
+        }
+
         if canCreateTap() {
             return .authorized
         }
-
-        guard let fn = preflightSPI else {
-            log.warning("TCCAccessPreflight SPI not available")
-            return .unknown
-        }
-        let result = fn("kTCCServiceAudioCapture" as CFString, nil)
-        // TCCAccessPreflight: 0 = authorized, 1 = not determined / prompt needed, 2 = denied.
-        log.debug("TCCAccessPreflight(kTCCServiceAudioCapture) = \(result, privacy: .public)")
-        switch result {
-        case 0: return .authorized
-        case 1: return .unknown
-        case 2: return .denied
-        default: return .unknown
-        }
+        return .unknown
     }
 
     /// Triggers the system permission prompt for `kTCCServiceAudioCapture` if the
@@ -68,9 +73,6 @@ enum AudioCapturePermission {
 
     /// Asynchronous helper for UI actions. Returns true if authorized. Does not block the main thread.
     static func ensureAuthorizedAsync() async -> Bool {
-        if canCreateTap() {
-            return true
-        }
         switch preflight() {
         case .authorized:
             return true
@@ -83,26 +85,10 @@ enum AudioCapturePermission {
         }
     }
 
-    /// Synchronous helper for engine startup. Returns true if we are (or become)
-    /// authorized. Blocks the calling thread on the prompt — only call from a
-    /// background queue if blocking the main thread would freeze the UI.
+    /// Synchronous helper for engine startup. Returns true if we are authorized.
+    /// Non-blocking so it never freezes the main thread or watchdog.
     static func ensureAuthorized() -> Bool {
-        if canCreateTap() {
-            return true
-        }
-        switch preflight() {
-        case .authorized:
-            return true
-        case .denied, .unknown:
-            let sem = DispatchSemaphore(value: 0)
-            var result = false
-            request { granted in
-                result = granted || canCreateTap()
-                sem.signal()
-            }
-            sem.wait()
-            return result
-        }
+        return preflight() == .authorized
     }
 
     // MARK: - Private TCC SPI

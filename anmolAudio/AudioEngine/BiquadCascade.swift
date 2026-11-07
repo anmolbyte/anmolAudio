@@ -10,7 +10,8 @@ import Accelerate
 final class BiquadCascade {
     let sectionCount: Int
     private var setup: vDSP_biquad_Setup
-    private var delayLine: [Float]
+    private var delayLine: UnsafeMutablePointer<Float>
+    private let delayLineCount: Int
     /// Active coefficient set, length `5 * sectionCount`. Updated atomically (memcpy)
     /// from the audio thread when a new set is published.
     private(set) var coefficients: [Double]
@@ -25,11 +26,15 @@ final class BiquadCascade {
             fatalError("vDSP_biquad_CreateSetup failed")
         }
         self.setup = setup
-        self.delayLine = [Float](repeating: 0, count: 2 * sectionCount + 2)
+        self.delayLineCount = 2 * sectionCount + 2
+        self.delayLine = .allocate(capacity: delayLineCount)
+        self.delayLine.initialize(repeating: 0, count: delayLineCount)
     }
 
     deinit {
         vDSP_biquad_DestroySetup(setup)
+        delayLine.deinitialize(count: delayLineCount)
+        delayLine.deallocate()
     }
 
     /// Replace coefficients on the existing setup. `vDSP_biquad_SetCoefficientsDouble`
@@ -44,20 +49,16 @@ final class BiquadCascade {
         }
     }
 
-    /// Process `frames` samples in place. Safe on the audio thread (no allocation).
+    /// Process `frames` samples in place. Safe on the audio thread (zero allocation, direct SIMD pointer).
     func process(_ buffer: UnsafeMutablePointer<Float>, frames: Int) {
-        delayLine.withUnsafeMutableBufferPointer { delay in
-            vDSP_biquad(setup, delay.baseAddress!, buffer, 1, buffer, 1, vDSP_Length(frames))
-        }
+        vDSP_biquad(setup, delayLine, buffer, 1, buffer, 1, vDSP_Length(frames))
     }
 
     /// Zero the IIR delay-line state. No allocation, audio-thread safe; the
     /// Cascade uses this when transitioning to bypass so residual
     /// state can't bleed into the next activation.
     func reset() {
-        for i in delayLine.indices {
-            delayLine[i] = 0
-        }
+        memset(delayLine, 0, delayLineCount * MemoryLayout<Float>.stride)
     }
 }
 
@@ -73,14 +74,15 @@ enum BiquadCoefficients {
         q: Float,
         sampleRate: Double
     ) -> (Double, Double, Double, Double, Double) {
-        guard sampleRate > 20.0 else { return identity }
+        guard sampleRate > 20.0, frequency.isFinite, gainDB.isFinite, q.isFinite else { return identity }
         let nyquist = sampleRate * 0.5
         let f = min(max(Double(frequency), 10.0), max(10.0, nyquist - 1.0))
-        let A = pow(10.0, Double(gainDB) / 40.0)
+        let clampedGain = min(max(Double(gainDB), -120.0), 30.0)
+        let A = pow(10.0, clampedGain / 40.0)
         let w0 = 2.0 * .pi * f / sampleRate
         let cosW0 = cos(w0)
         let sinW0 = sin(w0)
-        let qClamped = max(Double(q), 0.0001)
+        let qClamped = min(max(Double(q), 0.0001), 100.0)
 
         switch type {
         case .peak:
@@ -128,8 +130,14 @@ enum BiquadCoefficients {
         _ b0: Double, _ b1: Double, _ b2: Double,
         _ a0: Double, _ a1: Double, _ a2: Double
     ) -> (Double, Double, Double, Double, Double) {
-        guard abs(a0) > 1e-12 else { return identity }
+        guard abs(a0) > 1e-12, a0.isFinite, b0.isFinite, b1.isFinite, b2.isFinite, a1.isFinite, a2.isFinite else {
+            return identity
+        }
         let inv = 1.0 / a0
-        return (b0 * inv, b1 * inv, b2 * inv, a1 * inv, a2 * inv)
+        let norm = (b0 * inv, b1 * inv, b2 * inv, a1 * inv, a2 * inv)
+        guard norm.0.isFinite, norm.1.isFinite, norm.2.isFinite, norm.3.isFinite, norm.4.isFinite else {
+            return identity
+        }
+        return norm
     }
 }

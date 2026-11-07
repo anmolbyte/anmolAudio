@@ -372,10 +372,16 @@ struct EQEditorView: View {
             enforceWindowFloor(win)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { notification in
-            // Only react to our own editor window — the notification fires for
-            // every window in the app.
             guard let win = notification.object as? NSWindow, win == hostWindow else { return }
-            isWindowVisible = win.occlusionState.contains(.visible)
+            isWindowVisible = win.occlusionState.contains(.visible) && win.isVisible
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
+            guard let win = notification.object as? NSWindow, win == hostWindow else { return }
+            isWindowVisible = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let win = notification.object as? NSWindow, win == hostWindow else { return }
+            isWindowVisible = true
         }
         .onAppear {
             closeCoordinator.isDirty = isDirty

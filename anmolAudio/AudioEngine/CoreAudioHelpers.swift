@@ -145,6 +145,24 @@ enum CoreAudioDevices {
         )
     }
 
+    static func defaultInput() -> AudioDevice? {
+        guard let id = try? defaultDeviceID(scope: kAudioHardwarePropertyDefaultInputDevice) else { return nil }
+        return try? device(for: id)
+    }
+
+    static func setDefaultInput(id: AudioDeviceID) throws {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var deviceID = id
+        try check(
+            AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, UInt32(MemoryLayout<AudioDeviceID>.size), &deviceID),
+            "set default input device"
+        )
+    }
+
     private static func systemDeviceIDs() throws -> [AudioDeviceID] {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -248,10 +266,13 @@ enum CoreAudioDevices {
         )
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return 0 }
-        let bufferList = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(size))
-        defer { bufferList.deallocate() }
-        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, bufferList) == noErr else { return 0 }
-        let buffers = UnsafeMutableAudioBufferListPointer(bufferList)
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(size),
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { raw.deallocate() }
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, raw) == noErr else { return 0 }
+        let buffers = UnsafeMutableAudioBufferListPointer(raw.assumingMemoryBound(to: AudioBufferList.self))
         return buffers.reduce(0) { $0 + Int($1.mNumberChannels) }
     }
 }
@@ -298,7 +319,15 @@ enum CoreAudioSampleRate {
         let count = Int(size) / MemoryLayout<AudioValueRange>.size
         var ranges = [AudioValueRange](repeating: AudioValueRange(mMinimum: 0, mMaximum: 0), count: count)
         guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &ranges) == noErr else { return [] }
-        return ranges.map { $0.mMinimum...$0.mMaximum }
+        return ranges.compactMap { range in
+            guard range.mMinimum.isFinite, range.mMaximum.isFinite,
+                  range.mMinimum > 0, range.mMaximum > 0 else {
+                return nil
+            }
+            let lower = min(range.mMinimum, range.mMaximum)
+            let upper = max(range.mMinimum, range.mMaximum)
+            return lower...upper
+        }
     }
 
     static func supports(_ rate: Double, for id: AudioDeviceID) -> Bool {
@@ -478,6 +507,49 @@ final class DefaultOutputDeviceListener {
         )
         if status != noErr {
             log.error("Failed to register default-output device listener: \(status)")
+        }
+    }
+
+    deinit {
+        guard let block else { return }
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            block
+        )
+    }
+}
+
+// MARK: - Default input device listener
+
+/// Listens for changes to the system's default input device
+/// (`kAudioHardwarePropertyDefaultInputDevice`).
+final class DefaultInputDeviceListener {
+    typealias Handler = () -> Void
+
+    private let handler: Handler
+    private var address = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    private var block: AudioObjectPropertyListenerBlock?
+
+    init(handler: @escaping Handler) {
+        self.handler = handler
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            self?.handler()
+        }
+        self.block = block
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.main,
+            block
+        )
+        if status != noErr {
+            log.error("Failed to register default-input device listener: \(status)")
         }
     }
 

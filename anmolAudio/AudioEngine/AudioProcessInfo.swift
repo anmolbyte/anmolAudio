@@ -303,21 +303,34 @@ enum AudioProcessInfo {
         return bundleID
     }
 
-    /// Resolves a Finder icon for a bundle ID.
+    // MARK: - In-memory Icon Cache
+    private static let iconCache = NSCache<NSString, NSImage>()
+
+    /// Resolves a Finder icon for a bundle ID with in-memory caching.
     static func icon(forBundleID bundleID: String) -> NSImage? {
+        let key = bundleID as NSString
+        if let cached = iconCache.object(forKey: key) {
+            return cached
+        }
+
+        let resolved: NSImage?
         if bundleID == "systemsoundserverd" || bundleID == "com.apple.systemsoundserverd" {
             let config = NSImage.SymbolConfiguration(pointSize: 18, weight: .regular)
-            return NSImage(systemSymbolName: "speaker.wave.2.circle.fill", accessibilityDescription: "System Sounds")?
+            resolved = NSImage(systemSymbolName: "speaker.wave.2.circle.fill", accessibilityDescription: "System Sounds")?
                 .withSymbolConfiguration(config)
+        } else if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
+                  let icon = app.icon {
+            resolved = icon
+        } else if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            resolved = NSWorkspace.shared.icon(forFile: url.path)
+        } else {
+            resolved = nil
         }
-        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first,
-           let icon = app.icon {
-            return icon
+
+        if let resolved {
+            iconCache.setObject(resolved, forKey: key)
         }
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
-            return NSWorkspace.shared.icon(forFile: url.path)
-        }
-        return nil
+        return resolved
     }
 }
 

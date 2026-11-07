@@ -125,23 +125,32 @@ public final class AppVolumeStore: ObservableObject {
     }
 
     public func reset(for bundleID: String) {
-        guard volumes[bundleID] != nil else { return }
+        guard let old = volumes[bundleID] else { return }
         volumes.removeValue(forKey: bundleID)
         scheduleSave()
-        onGainChange?(bundleID, 1.0, false)
+        if !old.isNeutral {
+            onConfigurationChange?()
+        } else {
+            onGainChange?(bundleID, 1.0, false)
+        }
     }
 
     private func apply(_ entry: AppVolume, for bundleID: String, previousNeutral: Bool) {
-        if entry.isNeutral {
+        let isNowNeutral = entry.isNeutral
+        if isNowNeutral {
             volumes.removeValue(forKey: bundleID)
         } else {
             volumes[bundleID] = entry
         }
         scheduleSave()
 
-        // Inform audio thread of live gain update (lock-free, zero tap restart)
-        let gain = entry.isMuted ? 0.0 : VolumeTaper.gain(position: entry.volume)
-        onGainChange?(bundleID, gain, entry.isMuted)
+        if isNowNeutral != previousNeutral {
+            onConfigurationChange?()
+        } else {
+            // Inform audio thread of live gain update (lock-free, zero tap restart)
+            let gain = entry.isMuted ? 0.0 : VolumeTaper.gain(position: entry.volume)
+            onGainChange?(bundleID, gain, entry.isMuted)
+        }
     }
 
     private func scheduleSave() {

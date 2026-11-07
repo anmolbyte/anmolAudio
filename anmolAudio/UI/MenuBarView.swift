@@ -960,14 +960,23 @@ struct MenuBarView: View {
     private func startMetering() {
         guard meterTimer == nil else { return }
         engine.setAppMeteringActive(true)
-        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak engine] _ in
-            guard let engine else { return }
-            var newPeaks: [String: Float] = [:]
-            for app in self.runningAudioApps {
-                newPeaks[app.bundleID] = engine.appPeakLevel(for: app.bundleID)
+        let timer = Timer(timeInterval: 1.0 / 25.0, repeats: true) { [weak engine] _ in
+            MainActor.assumeIsolated {
+                guard let engine else { return }
+                var newPeaks: [String: Float] = [:]
+                var hasActiveSignal = false
+                for app in self.runningAudioApps {
+                    let p = engine.appPeakLevel(for: app.bundleID)
+                    if p > 0.005 { hasActiveSignal = true }
+                    newPeaks[app.bundleID] = p
+                }
+                // Skip re-rendering SwiftUI body when all apps are silent and peaks are already clear
+                if hasActiveSignal || !self.peakLevels.isEmpty {
+                    self.peakLevels = hasActiveSignal ? newPeaks : [:]
+                }
             }
-            self.peakLevels = newPeaks
         }
+        timer.tolerance = 0.010
         RunLoop.main.add(timer, forMode: .common)
         self.meterTimer = timer
     }

@@ -101,10 +101,9 @@ final class BypassHotkey {
               receivedID.signature == BypassHotkey.signature,
               receivedID.id == BypassHotkey.id
         else { return }
-        let pointer = UnsafeMutableRawPointer(userData)
-        DispatchQueue.main.async {
-            let me = Unmanaged<BypassHotkey>.fromOpaque(pointer).takeUnretainedValue()
-            me.engine?.setBypassed(pressed)
+        let me = Unmanaged<BypassHotkey>.fromOpaque(userData).takeUnretainedValue()
+        DispatchQueue.main.async { [weak me] in
+            me?.engine?.setBypassed(pressed)
         }
     }
 }

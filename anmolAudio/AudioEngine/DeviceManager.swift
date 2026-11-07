@@ -18,14 +18,30 @@ final class DeviceManager: ObservableObject {
         }
     }
 
+    @Published private(set) var inputDevices: [AudioDevice] = []
+
+    @Published var selectedInput: AudioDevice? {
+        didSet {
+            guard let newInput = selectedInput else { return }
+            guard newInput.uid != oldValue?.uid else { return }
+            syncSystemDefaultInputIfNeeded(to: newInput)
+        }
+    }
+
+    @Published private(set) var isLidClosed: Bool = ClamshellMonitor.isLidClosed
+
     /// Called by EQEngine to react to device topology changes (re-bind / stop / restart).
     var onTopologyChange: (() -> Void)?
 
     private let preferences: OutputSelectionPreferences
     private var topologyListener: DeviceChangeListener?
     private var defaultOutputListener: DefaultOutputDeviceListener?
+    private var defaultInputListener: DefaultInputDeviceListener?
+    private var clamshellMonitor: ClamshellMonitor?
     private var pendingSyncDeviceID: AudioObjectID?
     private var pendingSyncTimestamp: Date = .distantPast
+    private var pendingSyncInputDeviceID: AudioObjectID?
+    private var pendingSyncInputTimestamp: Date = .distantPast
     /// UID snapshot of the last visible device list — used to decide
     /// whether a topology notification actually changed anything the user
     /// cares about, or whether it was just our private tap aggregate
@@ -40,6 +56,12 @@ final class DeviceManager: ObservableObject {
         }
         defaultOutputListener = DefaultOutputDeviceListener { [weak self] in
             Task { @MainActor in self?.handleSystemDefaultChanged() }
+        }
+        defaultInputListener = DefaultInputDeviceListener { [weak self] in
+            Task { @MainActor in self?.handleSystemDefaultInputChanged() }
+        }
+        clamshellMonitor = ClamshellMonitor { [weak self] isClosed in
+            Task { @MainActor in self?.handleClamshellStateChanged(isClosed: isClosed) }
         }
     }
 
@@ -63,9 +85,7 @@ final class DeviceManager: ObservableObject {
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
 
         // Only record genuine physical/visible output devices, never private aggregates
-        for device in outs {
-            preferences.recordSeen(device: device)
-        }
+        preferences.recordSeen(devices: outs)
 
         // Snapshot the previous visible set before overwriting it — used both
         // for the material-change gate and to spot devices that just appeared.
@@ -74,6 +94,37 @@ final class DeviceManager: ObservableObject {
         let addedUIDs = previousUIDs.isEmpty ? [] : Set(newUIDs).subtracting(previousUIDs)
 
         self.outputDevices = outs
+
+        let ins = all
+            .filter(\.hasInput)
+            .filter {
+                !$0.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+                !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+                !$0.name.contains("System Tap")
+            }
+            .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+
+        self.inputDevices = ins
+        self.isLidClosed = ClamshellMonitor.isLidClosed
+
+        func isUsableInput(_ device: AudioDevice) -> Bool {
+            if isLidClosed && (device.transportType == .builtIn || device.uid == "BuiltInMicrophoneDevice") {
+                return false
+            }
+            return true
+        }
+
+        let usableIns = ins.filter(isUsableInput)
+        let systemDefault = CoreAudioDevices.defaultInput()
+            .flatMap { def in ins.first { $0.id == def.id || $0.uid == def.uid } }
+
+        if let sel = selectedInput, let still = ins.first(where: { $0.uid == sel.uid }), isUsableInput(still) {
+            selectedInput = still
+        } else if let sysDef = systemDefault, isUsableInput(sysDef) {
+            selectedInput = sysDef
+        } else {
+            selectedInput = usableIns.first ?? systemDefault ?? ins.first
+        }
 
         // Opt-in auto-switch: when a brand-new output device connects — e.g. a
         // USB DAC that macOS detects but doesn't promote to system default —
@@ -177,5 +228,64 @@ final class DeviceManager: ObservableObject {
         } else {
             log.info("System default changed → \(resolved.name, privacy: .public); policy is stay — no action")
         }
+    }
+
+    private func syncSystemDefaultInputIfNeeded(to input: AudioDevice) {
+        guard let currentDefault = CoreAudioDevices.defaultInput(), currentDefault.id != input.id else { return }
+        pendingSyncInputDeviceID = input.id
+        pendingSyncInputTimestamp = Date()
+        do {
+            try CoreAudioDevices.setDefaultInput(id: input.id)
+            log.info("Synced macOS default input to \(input.name, privacy: .public)")
+        } catch {
+            pendingSyncInputDeviceID = nil
+            log.error("Failed to sync macOS default input to \(input.name, privacy: .public): \(String(describing: error))")
+        }
+    }
+
+    private func handleSystemDefaultInputChanged() {
+        guard let newDefault = CoreAudioDevices.defaultInput() else {
+            log.info("System default input changed — no default device available")
+            return
+        }
+        if let pending = pendingSyncInputDeviceID {
+            if pending == newDefault.id {
+                pendingSyncInputDeviceID = nil
+                log.info("Ignoring echo of our own default input sync to \(newDefault.name, privacy: .public)")
+                return
+            } else if Date().timeIntervalSince(pendingSyncInputTimestamp) < 1.5 {
+                log.info("Ignoring intermediate system default input \(newDefault.name, privacy: .public) while waiting for sync to target device ID \(pending)")
+                return
+            } else {
+                pendingSyncInputDeviceID = nil
+            }
+        }
+        if !inputDevices.contains(where: { $0.id == newDefault.id || $0.uid == newDefault.uid }) {
+            refresh(initial: false)
+        }
+        guard let resolved = inputDevices.first(where: { $0.uid == newDefault.uid })
+            ?? inputDevices.first(where: { $0.id == newDefault.id }) else {
+            log.info("System default input changed to \(newDefault.name, privacy: .public) but it isn't in the visible input list")
+            return
+        }
+        if resolved.uid == selectedInput?.uid { return }
+
+        // If lid is closed and macOS just switched or echoed default to the dead built-in mic:
+        if isLidClosed && (resolved.transportType == .builtIn || resolved.uid == "BuiltInMicrophoneDevice") {
+            if let activeExternal = selectedInput, activeExternal.transportType != .builtIn && activeExternal.uid != "BuiltInMicrophoneDevice" {
+                log.info("macOS tried to default to built-in mic while lid is closed. Re-asserting \(activeExternal.name, privacy: .public)")
+                syncSystemDefaultInputIfNeeded(to: activeExternal)
+                return
+            }
+        }
+
+        log.info("System default input changed → \(resolved.name, privacy: .public); updating selectedInput")
+        selectedInput = resolved
+    }
+
+    private func handleClamshellStateChanged(isClosed: Bool) {
+        log.info("Clamshell state changed: isLidClosed = \(isClosed)")
+        self.isLidClosed = isClosed
+        refresh(initial: false)
     }
 }

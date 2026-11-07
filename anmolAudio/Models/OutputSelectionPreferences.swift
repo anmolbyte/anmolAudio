@@ -218,36 +218,54 @@ final class OutputSelectionPreferences: ObservableObject {
         }
     }
 
-    func recordSeen(device: AudioDevice) {
-        guard !device.uid.hasPrefix("app.anmol.anmolAudio.aggregate."),
-              !device.uid.hasPrefix("app.lurar.Lurar.aggregate."),
-              !device.name.contains("System Tap") else {
-            return
+    func recordSeen(devices: [AudioDevice]) {
+        let validDevices = devices.filter {
+            !$0.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
+            !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
+            !$0.name.contains("System Tap")
         }
+        guard !validDevices.isEmpty else { return }
+
         var list = knownDevices
-        if let idx = list.firstIndex(where: { $0.uid == device.uid }) {
-            list[idx].name = device.name
-            list[idx].transportType = device.transportType
-            list[idx].lastSeen = Date()
-        } else {
-            // Smart defaults: Docks default to .manualOnly; Displays default to .ignored
-            let initialPolicy: DevicePolicy
-            if device.isDisplay {
-                initialPolicy = .ignored
-            } else if device.isDock {
-                initialPolicy = .manualOnly
+        let now = Date()
+        var changed = false
+
+        for device in validDevices {
+            if let idx = list.firstIndex(where: { $0.uid == device.uid }) {
+                if list[idx].name != device.name || list[idx].transportType != device.transportType {
+                    list[idx].name = device.name
+                    list[idx].transportType = device.transportType
+                    list[idx].lastSeen = now
+                    changed = true
+                }
             } else {
-                initialPolicy = .auto
+                // Smart defaults: Docks default to .manualOnly; Displays default to .ignored
+                let initialPolicy: DevicePolicy
+                if device.isDisplay {
+                    initialPolicy = .ignored
+                } else if device.isDock {
+                    initialPolicy = .manualOnly
+                } else {
+                    initialPolicy = .auto
+                }
+                list.append(KnownDeviceRecord(
+                    uid: device.uid,
+                    name: device.name,
+                    transportType: device.transportType,
+                    lastSeen: now,
+                    policy: initialPolicy
+                ))
+                changed = true
             }
-            list.append(KnownDeviceRecord(
-                uid: device.uid,
-                name: device.name,
-                transportType: device.transportType,
-                lastSeen: Date(),
-                policy: initialPolicy
-            ))
         }
-        self.knownDevices = list
+
+        if changed {
+            self.knownDevices = list
+        }
+    }
+
+    func recordSeen(device: AudioDevice) {
+        recordSeen(devices: [device])
     }
 
     func forgetDevice(uid: String) {

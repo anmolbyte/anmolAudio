@@ -56,6 +56,12 @@ struct SpectrumOverlayView: View {
             }
         }
         .allowsHitTesting(false)
+        .onChange(of: isVisible, initial: true) { _, visible in
+            analyzer.isActive = visible
+        }
+        .onDisappear {
+            analyzer.isActive = false
+        }
     }
 
     private func draw(ctx: inout GraphicsContext, size: CGSize,

@@ -37,11 +37,12 @@ final class StereoFloatRingBuffer {
     private(set) var worstUnderrunShortfall: Int = 0
 
     init(capacityFrames: Int) {
-        self.capacity = capacityFrames
-        left = .allocate(capacity: capacityFrames)
-        right = .allocate(capacity: capacityFrames)
-        left.initialize(repeating: 0, count: capacityFrames)
-        right.initialize(repeating: 0, count: capacityFrames)
+        let validCapacity = max(1024, capacityFrames)
+        self.capacity = validCapacity
+        left = .allocate(capacity: validCapacity)
+        right = .allocate(capacity: validCapacity)
+        left.initialize(repeating: 0, count: validCapacity)
+        right.initialize(repeating: 0, count: validCapacity)
     }
 
     deinit {
@@ -61,15 +62,18 @@ final class StereoFloatRingBuffer {
         if n <= 0 { return 0 }
 
         let w = writeIdx % capacity
+        let byteCount = n * MemoryLayout<Float>.stride
         if w + n <= capacity {
-            left.advanced(by: w).update(from: lsrc, count: n)
-            right.advanced(by: w).update(from: rsrc, count: n)
+            memcpy(left.advanced(by: w), lsrc, byteCount)
+            memcpy(right.advanced(by: w), rsrc, byteCount)
         } else {
             let first = capacity - w
-            left.advanced(by: w).update(from: lsrc, count: first)
-            right.advanced(by: w).update(from: rsrc, count: first)
-            left.update(from: lsrc.advanced(by: first), count: n - first)
-            right.update(from: rsrc.advanced(by: first), count: n - first)
+            let firstBytes = first * MemoryLayout<Float>.stride
+            let remBytes = (n - first) * MemoryLayout<Float>.stride
+            memcpy(left.advanced(by: w), lsrc, firstBytes)
+            memcpy(right.advanced(by: w), rsrc, firstBytes)
+            memcpy(left, lsrc.advanced(by: first), remBytes)
+            memcpy(right, rsrc.advanced(by: first), remBytes)
         }
         writeIdx += n
         return n
@@ -83,29 +87,33 @@ final class StereoFloatRingBuffer {
         os_unfair_lock_lock(&lock)
         defer { os_unfair_lock_unlock(&lock) }
 
-        let available = writeIdx - readIdx
-        let n = min(available, frames)
+        let available = max(0, writeIdx - readIdx)
+        let n = max(0, min(available, frames))
 
         if n > 0 {
             let r = readIdx % capacity
+            let byteCount = n * MemoryLayout<Float>.stride
             if r + n <= capacity {
-                ldst.update(from: left.advanced(by: r), count: n)
-                rdst.update(from: right.advanced(by: r), count: n)
+                memcpy(ldst, left.advanced(by: r), byteCount)
+                memcpy(rdst, right.advanced(by: r), byteCount)
             } else {
                 let first = capacity - r
-                ldst.update(from: left.advanced(by: r), count: first)
-                rdst.update(from: right.advanced(by: r), count: first)
-                ldst.advanced(by: first).update(from: left, count: n - first)
-                rdst.advanced(by: first).update(from: right, count: n - first)
+                let firstBytes = first * MemoryLayout<Float>.stride
+                let remBytes = (n - first) * MemoryLayout<Float>.stride
+                memcpy(ldst, left.advanced(by: r), firstBytes)
+                memcpy(rdst, right.advanced(by: r), firstBytes)
+                memcpy(ldst.advanced(by: first), left, remBytes)
+                memcpy(rdst.advanced(by: first), right, remBytes)
             }
             readIdx += n
             applyGainEnvelope(left: ldst, right: rdst, frames: n)
         }
 
         if n < frames {
-            ldst.advanced(by: n).update(repeating: 0, count: frames - n)
-            rdst.advanced(by: n).update(repeating: 0, count: frames - n)
             let shortfall = frames - n
+            let zeroBytes = shortfall * MemoryLayout<Float>.stride
+            memset(ldst.advanced(by: n), 0, zeroBytes)
+            memset(rdst.advanced(by: n), 0, zeroBytes)
             underrunReads &+= 1
             if shortfall > worstUnderrunShortfall {
                 worstUnderrunShortfall = shortfall
@@ -114,20 +122,24 @@ final class StereoFloatRingBuffer {
         return n
     }
 
-    /// Clear the underrun counters. Main thread.
+    /// Clear the underrun counters without blocking real-time audio threads. Main thread.
     func resetUnderrunCount() {
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
-        underrunReads = 0
-        worstUnderrunShortfall = 0
+        if os_unfair_lock_trylock(&lock) {
+            underrunReads = 0
+            worstUnderrunShortfall = 0
+            os_unfair_lock_unlock(&lock)
+        }
     }
 
     /// Snapshot `(reads, worstShortfallFrames, availableFrames)` for
-    /// periodic diagnostic logging. Main thread.
+    /// periodic diagnostic logging. Non-blocking trylock so main-thread logging
+    /// never causes priority inversion or misses audio deadlines. Main thread.
     func underrunSnapshot() -> (reads: Int, worstShortfall: Int, available: Int) {
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
-        return (underrunReads, worstUnderrunShortfall, writeIdx - readIdx)
+        if os_unfair_lock_trylock(&lock) {
+            defer { os_unfair_lock_unlock(&lock) }
+            return (underrunReads, worstUnderrunShortfall, writeIdx - readIdx)
+        }
+        return (underrunReads, worstUnderrunShortfall, max(0, writeIdx - readIdx))
     }
 
     /// Schedule a linear gain ramp toward `target` over the next `rampFrames`
@@ -188,8 +200,10 @@ final class StereoFloatRingBuffer {
     }
 
     var availableFrames: Int {
-        os_unfair_lock_lock(&lock)
-        defer { os_unfair_lock_unlock(&lock) }
-        return writeIdx - readIdx
+        if os_unfair_lock_trylock(&lock) {
+            defer { os_unfair_lock_unlock(&lock) }
+            return max(0, writeIdx - readIdx)
+        }
+        return max(0, writeIdx - readIdx)
     }
 }
