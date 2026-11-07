@@ -51,6 +51,12 @@ final class EQProcessor {
     private var pendingBalanceR: Float = 1.0
     private var balanceL: Float = 1.0
     private var balanceR: Float = 1.0
+    private var pendingIsCrossfeed: Bool = false
+    private var isCrossfeed: Bool = false
+    private var pendingCrossfeedStrength: Float = 0.50
+    private var crossfeedStrength: Float = 0.50
+    private var crossfeedStateL: Float = 0.0
+    private var crossfeedStateR: Float = 0.0
 
     static let identityFlatCoefficients: [Double] = {
         var identity: [Double] = []
@@ -144,6 +150,14 @@ final class EQProcessor {
         os_unfair_lock_unlock(&lock)
     }
 
+    /// Sets headphone crossfeed state and strength (0.0 to 1.0).
+    func setCrossfeed(enabled: Bool, strength: Float) {
+        os_unfair_lock_lock(&lock)
+        pendingIsCrossfeed = enabled
+        pendingCrossfeedStrength = max(0.0, min(1.0, strength))
+        os_unfair_lock_unlock(&lock)
+    }
+
     // MARK: - Audio-thread entry
 
     /// Apply preamp + biquad cascades in place on left/right Float32 buffers. Picks up
@@ -181,6 +195,8 @@ final class EQProcessor {
             isChannelSwap = pendingIsChannelSwap
             balanceL = pendingBalanceL
             balanceR = pendingBalanceR
+            isCrossfeed = pendingIsCrossfeed
+            crossfeedStrength = pendingCrossfeedStrength
             os_unfair_lock_unlock(&lock)
         }
 
@@ -207,6 +223,25 @@ final class EQProcessor {
                         left[i] = right[i]
                         right[i] = tmp
                     }
+                }
+                if isCrossfeed && !isMono && crossfeedStrength > 0.001 {
+                    let fc: Float = 700.0
+                    let alpha: Float = 1.0 - exp(-2.0 * .pi * fc / Float(sampleRate))
+                    let k: Float = crossfeedStrength * 0.35
+                    let directGain: Float = 1.0 - k
+                    var stateL = crossfeedStateL
+                    var stateR = crossfeedStateR
+
+                    for i in 0..<frames {
+                        let inL = left[i]
+                        let inR = right[i]
+                        stateL += alpha * (inL - stateL)
+                        stateR += alpha * (inR - stateR)
+                        left[i] = directGain * inL + k * stateR
+                        right[i] = directGain * inR + k * stateL
+                    }
+                    crossfeedStateL = stateL
+                    crossfeedStateR = stateR
                 }
                 if isMono {
                     vDSP_vadd(left, 1, right, 1, left, 1, vDSP_Length(frames))
@@ -249,6 +284,25 @@ final class EQProcessor {
                     right[i] = tmp
                 }
             }
+            if isCrossfeed && !isMono && crossfeedStrength > 0.001 {
+                let fc: Float = 700.0
+                let alpha: Float = 1.0 - exp(-2.0 * .pi * fc / Float(sampleRate))
+                let k: Float = crossfeedStrength * 0.35
+                let directGain: Float = 1.0 - k
+                var stateL = crossfeedStateL
+                var stateR = crossfeedStateR
+
+                for i in 0..<frames {
+                    let inL = left[i]
+                    let inR = right[i]
+                    stateL += alpha * (inL - stateL)
+                    stateR += alpha * (inR - stateR)
+                    left[i] = directGain * inL + k * stateR
+                    right[i] = directGain * inR + k * stateL
+                }
+                crossfeedStateL = stateL
+                crossfeedStateR = stateR
+            }
             if isMono {
                 vDSP_vadd(left, 1, right, 1, left, 1, vDSP_Length(frames))
                 var half: Float = 0.5
@@ -276,6 +330,8 @@ final class EQProcessor {
         os_unfair_lock_lock(&lock)
         cascadeL.reset()
         cascadeR.reset()
+        crossfeedStateL = 0.0
+        crossfeedStateR = 0.0
         consecutiveSilentBlocks = 0
         os_unfair_lock_unlock(&lock)
     }

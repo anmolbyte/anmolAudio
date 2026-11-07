@@ -1146,14 +1146,18 @@ final class EQEngine: ObservableObject {
         updateChannelRouting()
     }
 
-    /// Updates live mono downmix, channel swap, and pan balance in the EQ processor for the active output device.
+    /// Updates live mono downmix, channel swap, pan balance, and crossfeed in the EQ processor for the active output device.
     func updateChannelRouting() {
         guard let outputPreferences, let activeOutput else { return }
         let mono = outputPreferences.isMonoDownmix(for: activeOutput.uid)
         let swap = outputPreferences.isChannelSwap(for: activeOutput.uid)
         let pan = outputPreferences.pan(for: activeOutput.uid)
+        let crossfeedOn = outputPreferences.isCrossfeedEnabled(for: activeOutput.uid)
+        let crossfeedStrength = outputPreferences.crossfeedStrength(for: activeOutput.uid)
+
         eqProcessor.setChannelRouting(isMono: mono, isChannelSwap: swap)
         eqProcessor.setPan(pan)
+        eqProcessor.setCrossfeed(enabled: crossfeedOn, strength: crossfeedStrength)
     }
 
     func updateBand(index: Int, band: EQBand) {

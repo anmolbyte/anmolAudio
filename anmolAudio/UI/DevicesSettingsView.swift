@@ -519,6 +519,86 @@ private struct DeviceCallConfigButton: View {
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
+
+                            // Bauer Headphone Crossfeed
+                            VStack(alignment: .leading, spacing: 4) {
+                                let isCrossfeedOn = outputPreferences.isCrossfeedEnabled(for: record.uid)
+                                HStack {
+                                    Toggle("Headphone Crossfeed (Bauer BS2B)", isOn: Binding(
+                                        get: { outputPreferences.isCrossfeedEnabled(for: record.uid) },
+                                        set: {
+                                            outputPreferences.setIsCrossfeedEnabled($0, for: record.uid)
+                                            if engine.activeOutput?.uid == record.uid {
+                                                engine.updateChannelRouting()
+                                            }
+                                        }
+                                    ))
+                                    .toggleStyle(.checkbox)
+
+                                    Spacer()
+
+                                    HStack(spacing: 2) {
+                                        TextField(
+                                            "",
+                                            value: Binding(
+                                                get: { Int(round(outputPreferences.crossfeedStrength(for: record.uid) * 100)) },
+                                                set: { newVal in
+                                                    let clamped = max(0, min(100, newVal))
+                                                    outputPreferences.setCrossfeedStrength(Float(clamped) / 100.0, for: record.uid)
+                                                    if engine.activeOutput?.uid == record.uid {
+                                                        engine.updateChannelRouting()
+                                                    }
+                                                }
+                                            ),
+                                            format: .number
+                                        )
+                                        .textFieldStyle(.plain)
+                                        .font(.caption.monospacedDigit())
+                                        .multilineTextAlignment(.trailing)
+                                        .frame(width: 32)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(Color(NSColor.controlBackgroundColor))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                                        .disabled(!isCrossfeedOn)
+
+                                        Text("%")
+                                            .font(.caption2)
+                                            .foregroundStyle(isCrossfeedOn ? .secondary : .tertiary)
+                                    }
+                                }
+
+                                HStack(spacing: 8) {
+                                    Text("Subtle")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.tertiary)
+
+                                    Slider(
+                                        value: Binding(
+                                            get: { Double(outputPreferences.crossfeedStrength(for: record.uid)) },
+                                            set: {
+                                                outputPreferences.setCrossfeedStrength(Float($0), for: record.uid)
+                                                if engine.activeOutput?.uid == record.uid {
+                                                    engine.updateChannelRouting()
+                                                }
+                                            }
+                                        ),
+                                        in: 0.0...1.0
+                                    )
+                                    .disabled(!isCrossfeedOn)
+
+                                    Text("Strong")
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .opacity(isCrossfeedOn ? 1.0 : 0.4)
+
+                                Text("Blends low-frequency spatial cues between channels to reduce headphone listening fatigue and create a natural acoustic soundstage.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .opacity(outputPreferences.isCrossfeedEnabled(for: record.uid) ? 1.0 : 0.7)
                         }
 
                         Divider()

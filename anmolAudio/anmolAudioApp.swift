@@ -34,7 +34,8 @@ struct anmolAudioApp: App {
                 presetStore: presetStore,
                 presetCatalog: presetCatalog,
                 devicePresetMemory: devicePresetMemory,
-                appVolumeStore: appVolumeStore
+                appVolumeStore: appVolumeStore,
+                outputPreferences: outputPreferences
             )
         } label: {
             MenuBarLabel(

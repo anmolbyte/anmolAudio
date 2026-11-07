@@ -10,6 +10,7 @@ struct MenuBarView: View {
     @ObservedObject var presetCatalog: PresetCatalog
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var appVolumeStore: AppVolumeStore
+    @ObservedObject var outputPreferences: OutputSelectionPreferences
 
     @Environment(\.openWindow) private var openWindow
 
@@ -153,6 +154,11 @@ struct MenuBarView: View {
             outputPicker
             presetPicker
             presetActionsRow
+
+            Divider()
+
+            deviceQuickTogglesRow
+            crossfeedSection
 
             if !runningAudioApps.isEmpty {
                 Divider()
@@ -501,6 +507,173 @@ struct MenuBarView: View {
             bypassButton
 
             Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private var deviceQuickTogglesRow: some View {
+        if let current = deviceManager.selectedOutput {
+            let isMono = outputPreferences.isMonoDownmix(for: current.uid)
+            let isSwap = outputPreferences.isChannelSwap(for: current.uid)
+            let isXfeed = outputPreferences.isCrossfeedEnabled(for: current.uid)
+
+            HStack(spacing: 6) {
+                // Mono Toggle Pill
+                Button {
+                    let newVal = !isMono
+                    outputPreferences.setIsMonoDownmix(newVal, for: current.uid)
+                    engine.updateChannelRouting()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "point.filled.topleft.point.curved.to.point.filled.bottomright.up")
+                            .font(.system(size: 9))
+                        Text("Mono")
+                            .font(.system(size: 11, weight: isMono ? .semibold : .regular))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(isMono ? Color.accentColor.opacity(0.18) : Color(NSColor.controlBackgroundColor))
+                    .foregroundStyle(isMono ? Color.accentColor : Color.secondary)
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(isMono ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Dual-mono downmix for \(current.name)")
+
+                // Swap L/R Toggle Pill
+                Button {
+                    let newVal = !isSwap
+                    outputPreferences.setIsChannelSwap(newVal, for: current.uid)
+                    engine.updateChannelRouting()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 9))
+                        Text("Swap L/R")
+                            .font(.system(size: 11, weight: isSwap ? .semibold : .regular))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(isSwap ? Color.accentColor.opacity(0.18) : Color(NSColor.controlBackgroundColor))
+                    .foregroundStyle(isSwap ? Color.accentColor : Color.secondary)
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(isSwap ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Invert stereo channels for \(current.name)")
+
+                // Crossfeed Toggle Pill
+                Button {
+                    let newVal = !isXfeed
+                    outputPreferences.setIsCrossfeedEnabled(newVal, for: current.uid)
+                    engine.updateChannelRouting()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "headphones")
+                            .font(.system(size: 9))
+                        Text("Crossfeed")
+                            .font(.system(size: 11, weight: isXfeed ? .semibold : .regular))
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(isXfeed ? Color.accentColor.opacity(0.18) : Color(NSColor.controlBackgroundColor))
+                    .foregroundStyle(isXfeed ? Color.accentColor : Color.secondary)
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(isXfeed ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Bauer BS2B headphone crossfeed for \(current.name)")
+
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var crossfeedSection: some View {
+        if let current = deviceManager.selectedOutput {
+            let isXfeed = outputPreferences.isCrossfeedEnabled(for: current.uid)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    HStack(spacing: 4) {
+                        Image(systemName: "headphones")
+                            .font(.caption2)
+                            .foregroundStyle(isXfeed ? Color.accentColor : Color.secondary)
+                        Text("Crossfeed")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(isXfeed ? .primary : .secondary)
+                    }
+
+                    Spacer()
+
+                    // Entry field with percentage
+                    HStack(spacing: 2) {
+                        TextField(
+                            "",
+                            value: Binding(
+                                get: { Int(round(outputPreferences.crossfeedStrength(for: current.uid) * 100)) },
+                                set: { newVal in
+                                    let clamped = max(0, min(100, newVal))
+                                    outputPreferences.setCrossfeedStrength(Float(clamped) / 100.0, for: current.uid)
+                                    engine.updateChannelRouting()
+                                }
+                            ),
+                            format: .number
+                        )
+                        .textFieldStyle(.plain)
+                        .font(.caption.monospacedDigit())
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 32)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(isXfeed ? 1.0 : 0.4))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .disabled(!isXfeed)
+
+                        Text("%")
+                            .font(.caption2)
+                            .foregroundStyle(isXfeed ? .secondary : .tertiary)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Text("Subtle")
+                        .font(.system(size: 9))
+                        .foregroundStyle(isXfeed ? .secondary : .tertiary)
+
+                    Slider(
+                        value: Binding(
+                            get: { Double(outputPreferences.crossfeedStrength(for: current.uid)) },
+                            set: {
+                                outputPreferences.setCrossfeedStrength(Float($0), for: current.uid)
+                                engine.updateChannelRouting()
+                            }
+                        ),
+                        in: 0.0...1.0
+                    )
+                    .disabled(!isXfeed)
+
+                    Text("Strong")
+                        .font(.system(size: 9))
+                        .foregroundStyle(isXfeed ? .secondary : .tertiary)
+                }
+                .opacity(isXfeed ? 1.0 : 0.4)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .opacity(isXfeed ? 1.0 : 0.5)
         }
     }
 

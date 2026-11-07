@@ -137,6 +137,8 @@ final class OutputSelectionPreferences: ObservableObject {
         var safeVolumeOnConnect: Bool?
         var enforceVolumeLimit: Bool?
         var maxVolumeLimit: Float?
+        var isCrossfeedEnabled: Bool?
+        var crossfeedStrength: Float?
     }
 
     static let lastOutputUIDKey = "anmolAudio.lastOutputDeviceUID"
@@ -361,7 +363,9 @@ final class OutputSelectionPreferences: ObservableObject {
                     rememberVolume: true,
                     safeVolumeOnConnect: true,
                     enforceVolumeLimit: false,
-                    maxVolumeLimit: 0.60
+                    maxVolumeLimit: 0.60,
+                    isCrossfeedEnabled: false,
+                    crossfeedStrength: 0.50
                 ))
                 changed = true
             }
@@ -629,6 +633,30 @@ final class OutputSelectionPreferences: ObservableObject {
         var list = knownDevices
         if let idx = list.firstIndex(where: { $0.uid == uid }) {
             list[idx].maxVolumeLimit = max(0.10, min(1.0, value))
+            self.knownDevices = list
+        }
+    }
+
+    func isCrossfeedEnabled(for uid: String) -> Bool {
+        knownDevices.first(where: { $0.uid == uid })?.isCrossfeedEnabled ?? false
+    }
+
+    func setIsCrossfeedEnabled(_ value: Bool, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].isCrossfeedEnabled = value
+            self.knownDevices = list
+        }
+    }
+
+    func crossfeedStrength(for uid: String) -> Float {
+        knownDevices.first(where: { $0.uid == uid })?.crossfeedStrength ?? 0.50
+    }
+
+    func setCrossfeedStrength(_ value: Float, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].crossfeedStrength = max(0.0, min(1.0, value))
             self.knownDevices = list
         }
     }
