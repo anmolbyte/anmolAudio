@@ -142,11 +142,19 @@ struct FixedWidthPopUp: NSViewRepresentable {
         // Signature includes item titles, enablement, and action titles so toggling
         // actions on/off or enabling/disabling items rebuilds the menu. Separator items
         // are serialized to a sentinel so they participate in the comparison.
-        let signature = items.map { $0.isSeparator ? "__sep__" : "\($0.title)_\($0.isEnabled)" } + ["__sep__"] + actions.map(\.title)
+        var signature = items.map { $0.isSeparator ? "__sep__" : "\($0.title)_\($0.isEnabled)" }
+        if !actions.isEmpty {
+            signature.append("__sep__")
+            signature.append(contentsOf: actions.map { "\($0.title)_true" })
+        }
         let existing = button.itemArray.map { item in
             item.isSeparatorItem ? "__sep__" : "\(item.title)_\(item.isEnabled)"
         }
         if signature != existing {
+            // Do not wipe out menu if user is actively interacting with it
+            if button.cell?.isHighlighted == true {
+                return
+            }
             button.removeAllItems()
             for item in items {
                 if item.isSeparator {

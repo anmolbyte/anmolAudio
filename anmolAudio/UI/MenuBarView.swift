@@ -985,8 +985,10 @@ struct MenuBarView: View {
     /// intent. The .onChange path still writes per-device memory.
     private func userPickedPreset(_ id: UUID) {
         selectedPresetID = id
+        applySelectedPreset(id: id)
         if let device = deviceManager.selectedOutput {
             devicePresetMemory.dismissSuggestion(for: device.uid)
+            devicePresetMemory.setLastPresetID(id, for: device.uid)
         }
     }
 
@@ -1068,9 +1070,9 @@ struct MenuBarView: View {
         suggestionAlternatives = []
     }
 
-    private func applySelectedPreset() {
-        guard let id = selectedPresetID,
-              let preset = visiblePresets.first(where: { $0.id == id }) else { return }
+    private func applySelectedPreset(id: UUID? = nil) {
+        guard let targetID = id ?? selectedPresetID,
+              let preset = visiblePresets.first(where: { $0.id == targetID }) else { return }
         if engine.currentPreset?.id == preset.id { return }
         engine.apply(preset: preset)
     }
