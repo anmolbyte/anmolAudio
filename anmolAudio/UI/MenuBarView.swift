@@ -151,6 +151,7 @@ struct MenuBarView: View {
 
             Divider()
 
+            inputPicker
             outputPicker
             presetPicker
             presetActionsRow
@@ -857,6 +858,33 @@ struct MenuBarView: View {
         dismissMenuBarWindow()
         openWindow(id: "editor")
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private var inputPicker: some View {
+        HStack(spacing: 8) {
+            Text("Input")
+                .frame(width: labelColumnWidth, alignment: .leading)
+            FixedWidthPopUp(
+                width: pickerWidth,
+                selection: Binding(
+                    get: { deviceManager.selectedInput?.uid ?? "" },
+                    set: { uid in
+                        guard let device = deviceManager.inputDevices.first(where: { $0.uid == uid }) else { return }
+                        if deviceManager.isLidClosed && (device.transportType == .builtIn || device.uid == "BuiltInMicrophoneDevice") {
+                            return
+                        }
+                        deviceManager.selectedInput = device
+                    }
+                ),
+                items: deviceManager.inputDevices.map { device in
+                    let isUnavailable = deviceManager.isLidClosed && (device.transportType == .builtIn || device.uid == "BuiltInMicrophoneDevice")
+                    let title = isUnavailable ? "\(device.name) (Lid closed)" : device.name
+                    return .init(id: device.uid, title: title, isEnabled: !isUnavailable)
+                }
+            )
+            .disabled(deviceManager.inputDevices.isEmpty)
+            .help("Pick the system audio input device")
+        }
     }
 
     private var outputPicker: some View {
