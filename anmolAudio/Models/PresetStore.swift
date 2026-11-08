@@ -56,6 +56,7 @@ final class PresetStore: ObservableObject {
         seedIfNeeded()
         load()
         ensureFlatPresent()
+        removeLegacyBuiltInMacBookPreset()
         startWatching()
 
         // React to the iCloud toggle flipping at runtime. Reactions are routed
@@ -350,6 +351,7 @@ final class PresetStore: ObservableObject {
         seedIfNeeded()
         load()
         ensureFlatPresent()
+        removeLegacyBuiltInMacBookPreset()
         startWatching()
         log.info("Switched preset store location to \(kind.rawValue): \(self.fileURL.path)")
     }
@@ -414,6 +416,18 @@ final class PresetStore: ObservableObject {
         var next = presets
         next.insert(EQPreset.flat, at: 0)
         write(next)
+    }
+
+    private static let legacyMacBookRedditID = UUID(uuidString: "19393522-07D9-4346-BFAF-AAD2ADC122F4")!
+
+    /// Remove the old built-in MacBook Pro 16" Reddit preset from user presets if still present.
+    private func removeLegacyBuiltInMacBookPreset() {
+        if presets.contains(where: { $0.id == Self.legacyMacBookRedditID }) {
+            var next = presets
+            next.removeAll(where: { $0.id == Self.legacyMacBookRedditID })
+            write(next)
+            log.info("Removed legacy built-in MacBook Pro Reddit preset from presets store")
+        }
     }
 
     // MARK: - Load / write

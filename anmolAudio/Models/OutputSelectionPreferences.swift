@@ -135,6 +135,7 @@ final class OutputSelectionPreferences: ObservableObject {
         var lastVolume: Float?
         var rememberVolume: Bool?
         var safeVolumeOnConnect: Bool?
+        var safeVolumeLevel: Float?
         var enforceVolumeLimit: Bool?
         var maxVolumeLimit: Float?
         var isCrossfeedEnabled: Bool?
@@ -150,9 +151,12 @@ final class OutputSelectionPreferences: ObservableObject {
     static let autoMuteOnDeviceChangeKey = "anmolAudio.autoMuteOnDeviceChange"
     static let autoPauseOnDeviceChangeKey = "anmolAudio.autoPauseOnDeviceChange"
     static let safeVolumeOnConnectKey = "anmolAudio.safeVolumeOnConnect"
+    static let safeVolumeLevelKey = "anmolAudio.safeVolumeLevel"
     static let pauseMusicOnCallKey = "anmolAudio.pauseMusicOnCall"
     static let resumeMusicAfterCallKey = "anmolAudio.resumeMusicAfterCall"
     static let callPauseBehaviorKey = "anmolAudio.callPauseBehavior"
+    static let muteOnCrashKey = "anmolAudio.muteOnCrash"
+    static let pauseOnCrashKey = "anmolAudio.pauseOnCrash"
 
     // Legacy migration keys
     static let legacyLastOutputUIDKey = "lurar.lastOutputDeviceUID"
@@ -192,6 +196,12 @@ final class OutputSelectionPreferences: ObservableObject {
         }
     }
 
+    @Published var safeVolumeLevel: Float {
+        didSet {
+            defaults.set(safeVolumeLevel, forKey: Self.safeVolumeLevelKey)
+        }
+    }
+
     @Published var pauseMusicOnCall: Bool {
         didSet {
             defaults.set(pauseMusicOnCall, forKey: Self.pauseMusicOnCallKey)
@@ -207,6 +217,20 @@ final class OutputSelectionPreferences: ObservableObject {
     @Published var callPauseBehavior: CallPauseBehavior {
         didSet {
             defaults.set(callPauseBehavior.rawValue, forKey: Self.callPauseBehaviorKey)
+        }
+    }
+
+    @Published var muteOnCrash: Bool {
+        didSet {
+            defaults.set(muteOnCrash, forKey: Self.muteOnCrashKey)
+            CrashGuard.shared.syncWithPreferences(muteOnCrash: muteOnCrash, pauseOnCrash: pauseOnCrash)
+        }
+    }
+
+    @Published var pauseOnCrash: Bool {
+        didSet {
+            defaults.set(pauseOnCrash, forKey: Self.pauseOnCrashKey)
+            CrashGuard.shared.syncWithPreferences(muteOnCrash: muteOnCrash, pauseOnCrash: pauseOnCrash)
         }
     }
 
@@ -235,6 +259,11 @@ final class OutputSelectionPreferences: ObservableObject {
         } else {
             self.safeVolumeOnConnect = defaults.bool(forKey: Self.safeVolumeOnConnectKey)
         }
+        if defaults.object(forKey: Self.safeVolumeLevelKey) == nil {
+            self.safeVolumeLevel = 0.30
+        } else {
+            self.safeVolumeLevel = defaults.float(forKey: Self.safeVolumeLevelKey)
+        }
         self.pauseMusicOnCall = defaults.bool(forKey: Self.pauseMusicOnCallKey)
         if defaults.object(forKey: Self.resumeMusicAfterCallKey) == nil {
             self.resumeMusicAfterCall = true
@@ -247,6 +276,8 @@ final class OutputSelectionPreferences: ObservableObject {
         } else {
             self.callPauseBehavior = .onAnswer
         }
+        self.muteOnCrash = defaults.bool(forKey: Self.muteOnCrashKey)
+        self.pauseOnCrash = defaults.bool(forKey: Self.pauseOnCrashKey)
         purgePrivateAggregateRecords()
     }
 
@@ -613,6 +644,21 @@ final class OutputSelectionPreferences: ObservableObject {
         var list = knownDevices
         if let idx = list.firstIndex(where: { $0.uid == uid }) {
             list[idx].safeVolumeOnConnect = value
+            self.knownDevices = list
+        }
+    }
+
+    func safeVolumeLevel(for uid: String) -> Float {
+        if let explicit = knownDevices.first(where: { $0.uid == uid })?.safeVolumeLevel {
+            return explicit
+        }
+        return self.safeVolumeLevel
+    }
+
+    func setSafeVolumeLevel(_ value: Float, for uid: String) {
+        var list = knownDevices
+        if let idx = list.firstIndex(where: { $0.uid == uid }) {
+            list[idx].safeVolumeLevel = max(0.01, min(1.0, value))
             self.knownDevices = list
         }
     }

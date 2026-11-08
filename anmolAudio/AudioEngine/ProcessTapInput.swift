@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import AudioToolbox
 import CoreAudio
 import Accelerate
@@ -137,35 +138,46 @@ final class ProcessTapInput {
             throw CoreAudioError.noProcessesToTap
         }
 
-        // 3. Separate processes into custom-volume apps vs neutral apps.
-        var processesByBundleID: [String: [AudioObjectID]] = [:]
-        var unbundledProcesses: [AudioObjectID] = []
+        // 3. Separate processes into dedicated GUI app taps vs system tap.
+        // Dedicated taps are allocated for regular GUI applications (or apps with custom volume).
+        // All system daemons, helpers, and background services bundle into Tap 0 (System Tap).
+        // This ensures the aggregate device clock remains rock-solid while providing zero-restart,
+        // instant, lock-free volume control for user applications.
+        var allProcessesByBundleID: [String: [AudioObjectID]] = [:]
+        var appProcessesByBundleID: [String: [AudioObjectID]] = [:]
+        var systemProcesses: [AudioObjectID] = []
 
         for obj in validProcesses {
-            if let bid = AudioProcessInfo.bundleID(for: obj) {
-                processesByBundleID[bid, default: []].append(obj)
+            if let bid = AudioProcessInfo.bundleID(for: obj), !bid.isEmpty {
+                allProcessesByBundleID[bid, default: []].append(obj)
+            }
+            guard let processPid = AudioProcessInfo.pid(for: obj) else {
+                systemProcesses.append(obj)
+                continue
+            }
+            let isRegularApp = (NSRunningApplication(processIdentifier: processPid)?.activationPolicy == .regular)
+            let rawBid = AudioProcessInfo.bundleID(for: obj)
+            let hasCustomVolume = (rawBid != nil && appVolumes[rawBid!] != nil)
+
+            if let bid = rawBid, !bid.isEmpty, (isRegularApp || hasCustomVolume) {
+                appProcessesByBundleID[bid, default: []].append(obj)
             } else {
-                unbundledProcesses.append(obj)
+                systemProcesses.append(obj)
             }
         }
 
-        // Dedicated taps are ONLY created for apps with customized volume or mute state.
-        // All neutral apps (100% volume, unmuted) bundle into Tap 0 for zero-overhead,
-        // bit-perfect capture with no Core Audio drift-compensation threads in coreaudiod.
-        var customBundleIDs: [String] = []
-        var neutralProcesses: [AudioObjectID] = unbundledProcesses
+        let sortedAppBundleIDs = appProcessesByBundleID.keys.sorted()
+        var dedicatedBundleIDs: [String] = []
 
-        for (bid, procs) in processesByBundleID {
-            let isCustom = appVolumes[bid].map { !$0.isNeutral } ?? false
-            if isCustom && customBundleIDs.count < (maxSlots - 1) {
-                customBundleIDs.append(bid)
-            } else {
-                neutralProcesses.append(contentsOf: procs)
+        for bid in sortedAppBundleIDs {
+            if dedicatedBundleIDs.count < (maxSlots - 1) {
+                dedicatedBundleIDs.append(bid)
+            } else if let procs = appProcessesByBundleID[bid] {
+                systemProcesses.append(contentsOf: procs)
             }
         }
-        customBundleIDs.sort()
 
-        log.info("Tap targets: valid=\(validProcesses.count) neutral=\(neutralProcesses.count) customApps=\(customBundleIDs.count) excludedByUser=\(excludedCount)")
+        log.info("Tap targets: valid=\(validProcesses.count) systemProcesses=\(systemProcesses.count) dedicatedApps=\(dedicatedBundleIDs.count) excludedByUser=\(excludedCount)")
 
         var newTapIDs: [AudioObjectID] = []
         var tapListEntries: [[String: Any]] = []
@@ -174,10 +186,10 @@ final class ProcessTapInput {
         var initialIsMuted: [Bool] = []
         var initialIsNeutral: [Bool] = []
 
-        // Tap 0: Neutral processes (if any exist)
-        if !neutralProcesses.isEmpty {
+        // Tap 0: System Tap (all system services, helpers, daemons, and fallback apps)
+        if !systemProcesses.isEmpty {
             let tapUUID = UUID()
-            let desc = CATapDescription(stereoMixdownOfProcesses: neutralProcesses)
+            let desc = CATapDescription(stereoMixdownOfProcesses: systemProcesses)
             desc.uuid = tapUUID
             desc.name = "anmolAudio System Tap (Main)"
             desc.muteBehavior = .mutedWhenTapped
@@ -202,13 +214,9 @@ final class ProcessTapInput {
             initialIsNeutral.append(true)
         }
 
-        // Taps 1..N: Dedicated taps for custom-volume apps
-        for bid in customBundleIDs {
-            guard let procs = processesByBundleID[bid], !procs.isEmpty else { continue }
-            guard newTapIDs.count < maxSlots else {
-                log.warning("Max tap slots (\(self.maxSlots)) reached; remaining apps stay in main tap")
-                break
-            }
+        // Dedicated taps for user audio applications
+        for bid in dedicatedBundleIDs {
+            guard let procs = appProcessesByBundleID[bid], !procs.isEmpty else { continue }
             let vol = appVolumes[bid] ?? AppVolume()
             let tapUUID = UUID()
             let desc = CATapDescription(stereoMixdownOfProcesses: procs)
@@ -223,7 +231,6 @@ final class ProcessTapInput {
             var newTapID: AudioObjectID = 0
             let tapStatus = AudioHardwareCreateProcessTap(desc, &newTapID)
             if tapStatus != noErr {
-                // If a process terminated mid-enumeration, do not abort the entire engine; skip this app's tap.
                 log.warning("AudioHardwareCreateProcessTap failed for \(bid) (status: \(tapStatus)); skipping process.")
                 continue
             }
@@ -298,7 +305,7 @@ final class ProcessTapInput {
         self.deviceID = newAggregateID
         self.tappedProcessObjects = Set(validProcesses)
         self.tapBufferStartIndex = Self.inputBufferCount(of: mainSubDevice.id)
-        self.processesByBundleID = processesByBundleID
+        self.processesByBundleID = allProcessesByBundleID
 
         // Seamless handoff: teardown previous taps & aggregate now that the new taps are active.
         if oldDeviceID != 0 {
@@ -444,11 +451,15 @@ final class ProcessTapInput {
         let count = min(abl.count - start, slotCount)
         guard count > 0 else { return }
 
-        // Compute frame count from the first tap buffer
-        let firstBuf = abl[start]
-        let channels = Int(firstBuf.mNumberChannels)
-        let totalFloats = Int(firstBuf.mDataByteSize) / MemoryLayout<Float>.size
-        let frames = channels > 0 ? totalFloats / channels : 0
+        // Compute frame count across all active tap buffers
+        var frames = 0
+        for s in 0..<count {
+            let buf = abl[start + s]
+            let ch = Int(buf.mNumberChannels)
+            let tf = Int(buf.mDataByteSize) / MemoryLayout<Float>.size
+            let f = ch > 0 ? tf / ch : 0
+            if f > frames { frames = f }
+        }
         guard frames > 0, frames <= scratchCapacityFrames else { return }
 
         // Clear scratch buffers with SIMD zeroing
@@ -479,15 +490,18 @@ final class ProcessTapInput {
             let targetGain: Float = isMuted ? 0.0 : slotPtr.pointee.targetGain
             var currentGain = slotPtr.pointee.currentGain
             let ramp = slotPtr.pointee.rampCoefficient
-            let isNeutral = slotPtr.pointee.isNeutral
             let prevPeak = slotPtr.pointee.peakLevel
 
             // Compute peak amplitude if UI metering is currently active (0% overhead when closed)
             if isMetering {
-                var rawPeak: Float = 0.0
                 let sampleCount = vDSP_Length(subFrames * bChannels)
+                var rawPeak: Float = 0.0
                 vDSP_maxmgv(interleaved, 1, &rawPeak, sampleCount)
-                let newPeak = (rawPeak >= prevPeak) ? rawPeak : (prevPeak * 0.82) // ~250ms decay
+
+                // Linear peak ballistics: scales naturally from silence (0.0 at the beginning)
+                // to full digital ceiling (1.0 at wherever the fader bar is set).
+                let instant = min(1.0, rawPeak)
+                let newPeak = (instant >= prevPeak) ? instant : (prevPeak * 0.88) // ~300ms natural release
                 if acquiredLock {
                     slotPtr.pointee.peakLevel = newPeak
                 }
@@ -499,29 +513,17 @@ final class ProcessTapInput {
             }
 
             // Fast path for steady-state unity gain
-            if isNeutral && abs(targetGain - 1.0) < 1e-4 && abs(currentGain - 1.0) < 1e-4 {
-                if s == 0 {
-                    if bChannels >= 2 {
-                        for i in 0..<subFrames {
-                            l[i] = interleaved[i * bChannels]
-                            r[i] = interleaved[i * bChannels + 1]
-                        }
-                    } else {
-                        memcpy(l, interleaved, subFrames * MemoryLayout<Float>.stride)
-                        memcpy(r, interleaved, subFrames * MemoryLayout<Float>.stride)
+            if abs(targetGain - 1.0) < 1e-4 && abs(currentGain - 1.0) < 1e-4 {
+                if bChannels >= 2 {
+                    for i in 0..<subFrames {
+                        l[i] += interleaved[i * bChannels]
+                        r[i] += interleaved[i * bChannels + 1]
                     }
                 } else {
-                    if bChannels >= 2 {
-                        for i in 0..<subFrames {
-                            l[i] += interleaved[i * bChannels]
-                            r[i] += interleaved[i * bChannels + 1]
-                        }
-                    } else {
-                        for i in 0..<subFrames {
-                            let mono = interleaved[i]
-                            l[i] += mono
-                            r[i] += mono
-                        }
+                    for i in 0..<subFrames {
+                        let mono = interleaved[i]
+                        l[i] += mono
+                        r[i] += mono
                     }
                 }
                 continue

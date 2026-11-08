@@ -20,6 +20,8 @@ final class EQEngine: ObservableObject {
     @Published private(set) var isPlayingAudio: Bool = false
     @Published private(set) var statusMessage: String = "Idle"
     @Published private(set) var currentPreset: EQPreset?
+    /// Retains the last valid preset configuration so restarts never lose the user's preamp or EQ.
+    private var lastConfiguredPreset: EQPreset?
     /// True while the EQ is running the A/B comparison slot mode (two presets
     /// pre-loaded, toggling between them). Editor sliders watch this to gate
     /// per-band edits — those calls no-op against the processor while slot
@@ -511,14 +513,15 @@ final class EQEngine: ObservableObject {
         //    configured against the tap's native rate so their per-sample math (ITD
         //    delay, FFT bin → Hz mapping) is correct relative to what was captured.
         activeOutput = output
-        if let preset = effectivePreset {
+        if let preset = effectivePreset ?? lastConfiguredPreset {
+            lastConfiguredPreset = preset
             let activeUID = output.uid
             let eqOn = outputPreferences?.enableEQ(for: activeUID) ?? true
             let preampOn = outputPreferences?.enablePreamp(for: activeUID) ?? true
             eqProcessor.configure(preset: preset, sampleRate: tapSampleRate, enableEQ: eqOn, enablePreamp: preampOn)
         } else {
-            // Safety fallback: ensure preamp is clamped safely
-            eqProcessor.setPreamp(dB: 0.0)
+            // Safety fallback: if no preset is available yet, maintain current DSP state rather than zeroing preamp
+            log.warning("fullStart: No preset available to configure; maintaining current DSP state")
         }
         updateChannelRouting()
         eqProcessor.reset()
@@ -767,9 +770,12 @@ final class EQEngine: ObservableObject {
         let untapped = untappedProcessObjects()
         guard !untapped.isEmpty else { return }
         let audible = untapped.contains { AudioProcessInfo.isRunningOutput($0) }
-        guard outputIsSilent else { return }
+        // CRITICAL AUDIO SAFETY: NEVER restart the audio engine if the new processes
+        // are silent/idle, and NEVER restart while the user is actively listening to audio!
+        guard audible else { return }
+        guard !isPlayingAudio && outputIsSilent else { return }
         tapRefreshCooldownUntil = Date().addingTimeInterval(Self.tapRefreshMinInterval)
-        log.info("Tap is missing \(untapped.count) process(es) (playing=\(audible)); rebuilding while silent")
+        log.info("Tap is missing \(untapped.count) audible process(es); rebuilding while silent and idle")
         // force: the cooldown exists to damp restart loops from system events;
         // this path is already rate-limited by `tapRefreshCooldownUntil`, and
         // every rebuild strictly grows the target set, so it converges.
@@ -1131,6 +1137,7 @@ final class EQEngine: ObservableObject {
             isBypassed = false
         }
         currentPreset = preset
+        lastConfiguredPreset = preset
         // An apply landing mid-drag (preset switch from the menu bar) must
         // not be clobbered by the staged copy when the drag ends.
         if isLiveEditing { liveEditPreset = preset }

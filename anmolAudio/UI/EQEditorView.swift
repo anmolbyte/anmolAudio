@@ -108,59 +108,6 @@ struct EQEditorView: View {
         presetStore.presets.first(where: { $0.id == draft.id })
     }
 
-    /// Map slot index (0..9) → band storage index, or nil for empty slots.
-    ///
-    /// Bands are placed left-to-right in ascending-frequency order; each
-    /// prefers its `SlotMath.zoneIndex` slot but is bumped right if a
-    /// lower-frequency band already claimed that slot. If the rightmost
-    /// band would overflow past slot 9 the whole row shifts left by the
-    /// overflow amount, which guarantees frequency ordering is preserved
-    /// even when many bands cluster in the same zone (the old greedy
-    /// algorithm wrapped overflow back to slot 0, putting the highest band
-    /// at the far left).
-    private var slotAssignment: [Int?] {
-        let sortedIndices = draft.bands.indices.sorted {
-            draft.bands[$0].frequency < draft.bands[$1].frequency
-        }
-        guard !sortedIndices.isEmpty else {
-            return Array(repeating: nil, count: SlotMath.count)
-        }
-
-        let countToPlace = min(sortedIndices.count, SlotMath.count)
-        let indicesToPlace = Array(sortedIndices.prefix(countToPlace))
-
-        // Pass 1: each band wants its preferred zone, but slots must strictly
-        // increase to keep frequency ordering left-to-right.
-        var placements: [Int] = []
-        placements.reserveCapacity(countToPlace)
-        for bandIdx in indicesToPlace {
-            let preferred = SlotMath.zoneIndex(for: draft.bands[bandIdx].frequency)
-            let minSlot = (placements.last ?? -1) + 1
-            placements.append(max(preferred, minSlot))
-        }
-
-        // Pass 2: backward pass to pull back any overshoot beyond SlotMath.count - 1
-        placements[countToPlace - 1] = min(placements[countToPlace - 1], SlotMath.count - 1)
-        if countToPlace > 1 {
-            for i in (0..<(countToPlace - 1)).reversed() {
-                placements[i] = min(placements[i], placements[i + 1] - 1)
-            }
-        }
-
-        // Pass 3: forward pass to ensure non-negative slots
-        placements[0] = max(0, placements[0])
-        if countToPlace > 1 {
-            for i in 1..<countToPlace where placements[i] <= placements[i - 1] {
-                placements[i] = placements[i - 1] + 1
-            }
-        }
-
-        var slots: [Int?] = Array(repeating: nil, count: SlotMath.count)
-        for (rank, slot) in placements.enumerated() where slot >= 0 && slot < SlotMath.count {
-            slots[slot] = indicesToPlace[rank]
-        }
-        return slots
-    }
 
     /// `bandLabels[storageIdx]` is the 1-based position of that band in
     /// frequency-sorted order — the number drawn on the curve badge and on
@@ -219,7 +166,7 @@ struct EQEditorView: View {
                     }
             }
         )
-        .frame(minWidth: 980)
+        .frame(minWidth: 1080)
         .background(hiddenEditorShortcuts)
         .toolbar {
             ToolbarItemGroup(placement: .destructiveAction) {
@@ -345,6 +292,7 @@ struct EQEditorView: View {
         .task {
             if let current = engine.currentPreset { draft = current }
             else if let first = presetStore.presets.first { draft = first }
+            draft.bands.sort { $0.frequency < $1.frequency }
             hydrateParentIfNeeded()
         }
         .onChange(of: engine.currentPreset) { _, new in
@@ -354,6 +302,7 @@ struct EQEditorView: View {
                 pendingSwitchTargetID = new.id
             } else {
                 draft = new
+                draft.bands.sort { $0.frequency < $1.frequency }
             }
         }
         .onChange(of: draft.parentRef) { _, _ in hydrateParentIfNeeded() }
@@ -401,7 +350,7 @@ struct EQEditorView: View {
 
     // MARK: - Window sizing
 
-    /// Editor needs room for 10 strip columns (≈88 px each) under the curve,
+    /// Editor needs room for 12 strip columns (≈88 px each) under the curve,
     /// plus the full column of sections above the preamp/output meters.
     /// `.frame(minWidth:)` on the SwiftUI content isn't always honoured at
     /// first open if the window restored a smaller frame from a previous
@@ -416,7 +365,7 @@ struct EQEditorView: View {
     /// across font-metric differences and future layout changes without
     /// hand-tuning a constant that silently goes stale.
     private func enforceWindowFloor(_ win: NSWindow) {
-        var minContent = NSSize(width: 1000, height: 760)
+        var minContent = NSSize(width: 1080, height: 760)
         if measuredContentHeight > win.contentLayoutRect.height + 0.5 {
             learnedMinContentHeight = max(learnedMinContentHeight ?? 0, measuredContentHeight)
         }
@@ -908,30 +857,57 @@ struct EQEditorView: View {
 
     // MARK: - Band add / remove
 
-    /// Append a band seeded with sensible defaults for the slot the user
-    /// clicked. Shelves at the spectrum edges, peak elsewhere. Engine has to
-    /// rebuild the cascade since the band count changed — `apply(preset:)`
-    /// does that atomically.
-    private func addBand(at frequency: Float) {
-        guard !editsLocked, draft.bands.count < SlotMath.count else { return }
+    /// Append a band seeded in the largest frequency gap, autosorted into
+    /// frequency order. Supports up to EQProcessor.sectionCount (20) bands.
+    private func addBand() {
+        guard !editsLocked, draft.bands.count < EQProcessor.sectionCount else { return }
+
+        let newFreq: Float
+        if draft.bands.isEmpty {
+            newFreq = 1000.0
+        } else {
+            let sortedFreqs = draft.bands.map(\.frequency).sorted()
+            var bestGapRatio: Double = 0
+            var bestFreq: Double = 1000.0
+
+            let allPoints = [20.0] + sortedFreqs.map(Double.init) + [20_000.0]
+            for i in 0..<(allPoints.count - 1) {
+                let low = allPoints[i]
+                let high = allPoints[i + 1]
+                let ratio = high / low
+                if ratio > bestGapRatio {
+                    bestGapRatio = ratio
+                    bestFreq = sqrt(low * high)
+                }
+            }
+            newFreq = Float(round(bestFreq))
+        }
+
         let type: EQBand.FilterType
-        if frequency <= 60 {
+        if newFreq <= 60 {
             type = .lowShelf
-        } else if frequency >= 8_000 {
+        } else if newFreq >= 8000 {
             type = .highShelf
         } else {
             type = .peak
         }
-        let q: Float = type == .peak ? 1.0 : 0.71
-        draft.bands.append(EQBand(type: type, frequency: frequency, gain: 0, q: q))
+
+        let q: Float = (type == .peak) ? 1.0 : 0.71
+        let newBand = EQBand(type: type, frequency: newFreq, gain: 0, q: q)
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            draft.bands.append(newBand)
+            draft.bands.sort { $0.frequency < $1.frequency }
+        }
         engine.apply(preset: draft)
     }
 
-    /// Remove the band at the given storage index. Slot indices in the
-    /// engine's cascade shift, so we have to rebuild via `apply(preset:)`.
+    /// Remove the band at the given storage index. Lower bound is 1 band.
     private func removeBand(at storageIndex: Int) {
-        guard !editsLocked, draft.bands.indices.contains(storageIndex) else { return }
-        draft.bands.remove(at: storageIndex)
+        guard !editsLocked, draft.bands.count > 1, draft.bands.indices.contains(storageIndex) else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            draft.bands.remove(at: storageIndex)
+        }
         engine.apply(preset: draft)
     }
 
@@ -1035,29 +1011,76 @@ struct EQEditorView: View {
     private func handleBadgeDragEnded() {
         draggingBand = nil
         sliderEditingChanged(false)
+        withAnimation(.easeInOut(duration: 0.15)) {
+            draft.bands.sort { $0.frequency < $1.frequency }
+        }
+        engine.apply(preset: draft)
     }
 
     // MARK: - Strip rail
 
-    /// Horizontal row of 10 strip columns under the curve. Slots are bound
-    /// to log-frequency zones (see `SlotMath`), so a strip's x-position
-    /// roughly matches the position of its band on the curve above. Empty
-    /// slots show a dashed "+" with the zone's default frequency.
+    private let stripWidth: CGFloat = 98
+    private let stripSpacing: CGFloat = 6
+
+    /// Horizontal row of EQ band strips under the curve, autosorted left-to-right by frequency.
+    /// Uses consistent 10-band width (98 pt each), scrolling horizontally if bands + adder exceed window width.
     private var stripRail: some View {
-        HStack(spacing: 4) {
-            let slots = slotAssignment
-            ForEach(0..<SlotMath.count, id: \.self) { slotIdx in
-                if let bandIdx = slots[slotIdx], draft.bands.indices.contains(bandIdx) {
+        ScrollView(.horizontal, showsIndicators: true) {
+            HStack(spacing: stripSpacing) {
+                ForEach(Array(draft.bands.enumerated()), id: \.element.id) { index, band in
                     bandStrip(
-                        bandIndex: bandIdx,
-                        displayPosition: bandLabels.indices.contains(bandIdx) ? bandLabels[bandIdx] : bandIdx + 1
+                        bandIndex: index,
+                        displayPosition: index + 1
                     )
-                } else {
-                    emptySlotStrip(slotIndex: slotIdx)
+                }
+
+                if draft.bands.count < EQProcessor.sectionCount && !editsLocked {
+                    addEqualizerCard
                 }
             }
+            .padding(.horizontal, 2)
+            .padding(.bottom, 6)
         }
-        .frame(maxWidth: .infinity, minHeight: 200)
+        .frame(height: 220)
+    }
+
+    private var addEqualizerCard: some View {
+        Button {
+            addBand()
+        } label: {
+            VStack(spacing: 8) {
+                Spacer(minLength: 0)
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.12))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+                Text("Add equalizer")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Spacer(minLength: 0)
+            }
+            .frame(width: stripWidth, height: 200)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.secondary.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(
+                        .separator,
+                        style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(editsLocked || draft.bands.count >= EQProcessor.sectionCount)
+        .help(draft.bands.count >= EQProcessor.sectionCount ? "Maximum of 20 bands reached" : "Add a new equalizer band (up to 20)")
     }
 
     private var preampRow: some View {
@@ -1109,12 +1132,20 @@ struct EQEditorView: View {
         BandStrip(
             band: band,
             displayPosition: displayPosition,
+            canRemove: draft.bands.count > 1,
             editsLocked: editsLocked,
             frequencyUnit: frequencyUnit,
             onBandChange: { updated in
                 if let i = draft.bands.firstIndex(where: { $0.id == bandID }) {
                     draft.bands[i] = updated
-                    engine.updateBand(index: i, band: updated)
+                    if updated.frequency != band.frequency {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            draft.bands.sort { $0.frequency < $1.frequency }
+                        }
+                        engine.apply(preset: draft)
+                    } else {
+                        engine.updateBand(index: i, band: updated)
+                    }
                 }
             },
             onRemove: {
@@ -1125,47 +1156,6 @@ struct EQEditorView: View {
             onSliderEditingChanged: sliderEditingChanged
         )
         .equatable()
-    }
-
-    /// Dashed-outline slot showing only a "+" and the default frequency we'd
-    /// seed if the user clicks. The whole strip is the button.
-    @ViewBuilder
-    private func emptySlotStrip(slotIndex: Int) -> some View {
-        let defaultFreq = SlotMath.zoneCenter(slotIndex)
-        Button {
-            addBand(at: defaultFreq)
-        } label: {
-            VStack(spacing: 6) {
-                Spacer(minLength: 0)
-                Image(systemName: "plus")
-                    .font(.system(size: 22, weight: .regular))
-                    .foregroundStyle(.secondary)
-                Text("Add band")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(Self.formatFrequency(defaultFreq, unit: frequencyUnit))
-                    .font(.system(size: 9))
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.secondary.opacity(0.03))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(
-                        .separator,
-                        style: StrokeStyle(lineWidth: 1, dash: [4, 3])
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(editsLocked || draft.bands.count >= SlotMath.count)
-        .help("Add a band centered near \(Self.formatFrequency(defaultFreq, unit: frequencyUnit))")
     }
 
     // MARK: - Numeric field parsing
@@ -1549,6 +1539,7 @@ private struct NumericTextField: NSViewRepresentable {
 private struct BandStrip: View, Equatable {
     let band: EQBand
     let displayPosition: Int
+    let canRemove: Bool
     let editsLocked: Bool
     let frequencyUnit: FrequencyUnit
     let onBandChange: (EQBand) -> Void
@@ -1558,6 +1549,7 @@ private struct BandStrip: View, Equatable {
     static func == (lhs: BandStrip, rhs: BandStrip) -> Bool {
         lhs.band == rhs.band
             && lhs.displayPosition == rhs.displayPosition
+            && lhs.canRemove == rhs.canRemove
             && lhs.editsLocked == rhs.editsLocked
             && lhs.frequencyUnit == rhs.frequencyUnit
     }
@@ -1633,7 +1625,7 @@ private struct BandStrip: View, Equatable {
             )
         }
         .padding(8)
-        .frame(maxWidth: .infinity)
+        .frame(width: 98, height: 200)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.secondary.opacity(0.08))
@@ -1667,6 +1659,7 @@ private struct BandStrip: View, Equatable {
             } label: {
                 Label("Remove band", systemImage: "trash")
             }
+            .disabled(editsLocked || !canRemove)
         } label: {
             HStack(spacing: 3) {
                 FilterTypeIcon(type: band.type)

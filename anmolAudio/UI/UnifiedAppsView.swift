@@ -369,17 +369,23 @@ private struct AppRowView: View {
                 .disabled(isBypassed)
                 .help(isMuted ? "Unmute app" : "Mute app")
 
-                Slider(value: Binding(
-                    get: { Double(volume) },
-                    set: { onVolumeChange(Float($0)) }
-                ), in: 0...1.5)
-                .frame(width: 90)
-                .disabled(isBypassed)
+                if isBypassed {
+                    Text("EQ Bypassed")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                } else {
+                    Slider(value: Binding(
+                        get: { Double(volume) },
+                        set: { onVolumeChange(Float($0)) }
+                    ), in: 0...1.5)
+                    .frame(width: 90)
 
-                Text(isBypassed ? "Bypassed" : (isMuted ? "Muted" : "\(Int(round(volume * 100)))%"))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(isMuted ? .red : .secondary)
-                    .frame(width: 38, alignment: .trailing)
+                    Text(isMuted ? "Muted" : "\(Int(round(volume * 100)))%")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(isMuted ? .red : .secondary)
+                        .frame(width: 38, alignment: .trailing)
+                }
             }
             .frame(width: 155)
 

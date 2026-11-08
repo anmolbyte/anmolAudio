@@ -96,10 +96,10 @@ final class OutputVolumeMonitor: ObservableObject {
             }
         }
 
-        // 2. Safe volume on connect (cap to 30% if louder on device switch)
+        // 2. Safe volume on connect (cap to safeVolumeLevel if louder on device switch)
         if isDeviceSwitch {
             if prefs.safeVolumeOnConnect(for: uid) {
-                let safeCap: Float = 0.30
+                let safeCap: Float = prefs.safeVolumeLevel(for: uid)
                 let effectiveVol = CoreAudioVolume.scalar(for: deviceID) ?? currentVol
                 if effectiveVol > (safeCap + 0.015) {
                     log.info("Safe Volume on connect: clamping device \(deviceID) from \(effectiveVol) to \(safeCap)")

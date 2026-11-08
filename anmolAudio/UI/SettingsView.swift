@@ -105,76 +105,84 @@ private struct GeneralSettingsTab: View {
 
                     Divider()
 
+                    HStack {
+                        Text("When devices change")
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { outputPreferences.switchPolicy },
+                            set: { outputPreferences.switchPolicy = $0 }
+                        )) {
+                            ForEach(OutputSelectionPreferences.SwitchPolicy.allCases) { policy in
+                                Text(policy.title).tag(policy)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .help("How anmolAudio reacts when an output device connects or the system default changes")
+                    }
+
+                    Divider()
+
+                    Toggle("Auto-pause media on device change", isOn: $outputPreferences.autoPauseOnDeviceChange)
+                        .toggleStyle(.checkbox)
+                        .help("Automatically pauses media playback whenever the audio output destination changes or disconnects")
+
+                    Divider()
+
+                    Toggle("Auto-mute on device change", isOn: $outputPreferences.autoMuteOnDeviceChange)
+                        .toggleStyle(.checkbox)
+                        .help("Mutes the new audio output device when the playback destination changes or disconnects")
+
+                    Divider()
+
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("When devices change")
-                            Spacer()
-                            Picker("", selection: Binding(
-                                get: { outputPreferences.switchPolicy },
-                                set: { outputPreferences.switchPolicy = $0 }
-                            )) {
-                                ForEach(OutputSelectionPreferences.SwitchPolicy.allCases) { policy in
-                                    Text(policy.title).tag(policy)
+                        Toggle("Safe volume on connect", isOn: $outputPreferences.safeVolumeOnConnect)
+                            .toggleStyle(.checkbox)
+                            .help("Caps initial volume to a safe level when audio devices or headphones connect")
+
+                        if outputPreferences.safeVolumeOnConnect {
+                            HStack {
+                                Text("Safe volume cap")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                HStack(spacing: 2) {
+                                    TextField(
+                                        "",
+                                        value: Binding(
+                                            get: { Int(round(outputPreferences.safeVolumeLevel * 100)) },
+                                            set: { newVal in
+                                                let clamped = max(1, min(100, newVal))
+                                                outputPreferences.safeVolumeLevel = Float(clamped) / 100.0
+                                            }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.plain)
+                                    .font(.caption.monospacedDigit())
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 36)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Color(NSColor.controlBackgroundColor))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                                    Text("%")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
                             }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .fixedSize()
-                            .help("How anmolAudio reacts when an output device connects or the system default changes")
+                            .padding(.leading, 18)
                         }
-                        Text(outputPreferences.switchPolicy.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Auto-pause media on device change", isOn: $outputPreferences.autoPauseOnDeviceChange)
-                            .toggleStyle(.checkbox)
-                            .help("Automatically pauses media playback whenever the audio output destination changes or disconnects")
-                        Text("Pauses media players (Spotify, Apple Music, YouTube in browsers) when headphones disconnect or audio switches, preventing audio from playing unexpectedly.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Auto-mute on device change", isOn: $outputPreferences.autoMuteOnDeviceChange)
-                            .toggleStyle(.checkbox)
-                            .help("Mutes the new audio output device when the playback destination changes or disconnects")
-                        Text("Prevents audio from accidentally blasting through MacBook speakers when headphones are unplugged or Bluetooth disconnects.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Safe volume on connect (30% cap)", isOn: $outputPreferences.safeVolumeOnConnect)
-                            .toggleStyle(.checkbox)
-                            .help("Caps initial volume to a safe 30% level when audio devices or headphones connect")
-                        Text("Protects hearing and sensitive IEMs from sudden ear-bleed volume blasts if headphones were left loud or Bluetooth reconnects at 100%.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     Divider()
 
                     VStack(alignment: .leading, spacing: 10) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Toggle("Pause music while on call", isOn: $outputPreferences.pauseMusicOnCall)
-                                .toggleStyle(.checkbox)
-                                .help("Automatically pauses media playback when an incoming or active call is detected")
-                            Text("Pauses media players (Spotify, Apple Music, Safari/Chrome YouTube, etc.) during calls.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        Toggle("Pause music while on call", isOn: $outputPreferences.pauseMusicOnCall)
+                            .toggleStyle(.checkbox)
+                            .help("Automatically pauses media playback when an incoming or active call is detected")
 
                         if outputPreferences.pauseMusicOnCall {
                             VStack(alignment: .leading, spacing: 10) {
@@ -186,36 +194,31 @@ private struct GeneralSettingsTab: View {
                                 .pickerStyle(.radioGroup)
                                 .padding(.leading, 18)
 
-                                Text(outputPreferences.callPauseBehavior.detail)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.leading, 18)
-                                    .fixedSize(horizontal: false, vertical: true)
-
                                 Toggle("Resume music after call", isOn: $outputPreferences.resumeMusicAfterCall)
                                     .toggleStyle(.checkbox)
                                     .padding(.leading, 18)
                                     .help("Automatically resumes playback when the call ends, if music was playing before")
-                                Text("Resumes playback once you hang up, provided music was playing before the call.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.leading, 18)
-                                    .fixedSize(horizontal: false, vertical: true)
                             }
                         }
                     }
 
                     Divider()
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Toggle("Disable transparency", isOn: $disableTransparency)
-                            .toggleStyle(.checkbox)
-                            .help("Use solid opaque backgrounds instead of blurred glass effects")
-                        Text("Uses solid opaque backgrounds instead of translucent blur in the menu bar popover and editor overlays. Reduces GPU load and improves contrast.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Toggle("Mute on crash", isOn: $outputPreferences.muteOnCrash)
+                        .toggleStyle(.checkbox)
+                        .help("Immediately mutes hardware volume if the application terminates unexpectedly")
+
+                    Divider()
+
+                    Toggle("Pause media on crash", isOn: $outputPreferences.pauseOnCrash)
+                        .toggleStyle(.checkbox)
+                        .help("Immediately pauses media playback if the application terminates unexpectedly")
+
+                    Divider()
+
+                    Toggle("Disable transparency", isOn: $disableTransparency)
+                        .toggleStyle(.checkbox)
+                        .help("Use solid opaque backgrounds instead of blurred glass effects")
 
                     Divider()
 

@@ -10,6 +10,8 @@ struct DevicesSettingsView: View {
     @ObservedObject var balanceLockManager: BalanceLockManager
 
     @Environment(\.openWindow) private var openWindow
+    @State private var expandedDeviceUID: String? = nil
+    @State private var deviceToForget: OutputSelectionPreferences.KnownDeviceRecord? = nil
 
     private var visiblePresetsList: [EQPreset] {
         anmolAudio.visiblePresets(catalog: presetCatalog, store: presetStore)
@@ -71,16 +73,29 @@ struct DevicesSettingsView: View {
                                 Text("Config")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
-                                    .frame(width: 44, alignment: .center)
-                                Color.clear
-                                    .frame(width: 20, height: 1)
+                                    .frame(width: 50, alignment: .center)
                             }
                             .padding(.horizontal, 14)
                             .padding(.top, 4)
 
                             VStack(spacing: 8) {
                                 ForEach(outputPreferences.knownDevices) { record in
-                                    deviceRow(for: record)
+                                    let isExpanded = (expandedDeviceUID == record.uid)
+                                    VStack(spacing: 0) {
+                                        deviceRow(for: record, isExpanded: isExpanded)
+
+                                        if isExpanded {
+                                            Divider()
+
+                                            deviceConfigDrawer(for: record)
+                                        }
+                                    }
+                                    .background(Color(nsColor: .controlBackgroundColor))
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(isExpanded ? Color(nsColor: .separatorColor).opacity(0.7) : Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                                    )
                                 }
                             }
                             .padding(.vertical, 4)
@@ -94,6 +109,27 @@ struct DevicesSettingsView: View {
             Divider()
 
             footer
+        }
+        .alert(
+            "Forget Device?",
+            isPresented: Binding(
+                get: { deviceToForget != nil },
+                set: { if !$0 { deviceToForget = nil } }
+            ),
+            presenting: deviceToForget
+        ) { dev in
+            Button("Cancel", role: .cancel) {
+                deviceToForget = nil
+            }
+            Button("Forget Device", role: .destructive) {
+                if expandedDeviceUID == dev.uid {
+                    expandedDeviceUID = nil
+                }
+                outputPreferences.forgetDevice(uid: dev.uid)
+                deviceToForget = nil
+            }
+        } message: { dev in
+            Text("Are you sure you want to forget “\(dev.name)”? All custom configuration, volume levels, and preset associations for this device will be removed.")
         }
     }
 
@@ -117,41 +153,47 @@ struct DevicesSettingsView: View {
     }
 
     @ViewBuilder
-    private func deviceRow(for record: OutputSelectionPreferences.KnownDeviceRecord) -> some View {
+    private func deviceRow(for record: OutputSelectionPreferences.KnownDeviceRecord, isExpanded: Bool) -> some View {
         let isConnected = deviceManager.outputDevices.contains(where: { $0.uid == record.uid })
         let isCurrentlySelected = deviceManager.selectedOutput?.uid == record.uid
         let effectivePolicy = outputPreferences.policy(for: record.uid) ?? record.policy
 
         HStack(spacing: 12) {
             Image(systemName: record.transportType.systemImage)
-                .font(.title2)
+                .font(.system(size: 18))
                 .foregroundStyle(isCurrentlySelected ? Color.accentColor : Color.secondary)
-                .frame(width: 32)
+                .frame(width: 26)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(record.name)
                         .font(.body.weight(.medium))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.85)
+                        .truncationMode(.tail)
                         .help(record.name)
 
                     if isCurrentlySelected {
                         Text("Active")
                             .font(.system(size: 10, weight: .bold))
+                            .lineLimit(1)
                             .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.vertical, 1.5)
                             .background(Color.accentColor.opacity(0.15))
                             .foregroundStyle(Color.accentColor)
                             .clipShape(Capsule())
+                            .fixedSize()
+                            .layoutPriority(1)
                     } else if isConnected {
                         Text("Connected")
                             .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
                             .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
+                            .padding(.vertical, 1.5)
                             .background(Color.green.opacity(0.15))
                             .foregroundStyle(.green)
                             .clipShape(Capsule())
+                            .fixedSize()
+                            .layoutPriority(1)
                     }
                 }
 
@@ -159,9 +201,7 @@ struct DevicesSettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            .frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
-
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Paired EQ Preset Dropdown with "Add preset…" action
             FixedWidthPopUp(
@@ -217,55 +257,413 @@ struct DevicesSettingsView: View {
             .pickerStyle(.menu)
             .frame(width: 120)
 
-            DeviceCallConfigButton(
-                record: record,
-                outputPreferences: outputPreferences,
-                engine: engine,
-                balanceLockManager: balanceLockManager
-            )
-            .frame(width: 44, alignment: .center)
-
-            // Fixed-width slot for the forget/remove button to keep all rows and columns aligned
-            Group {
-                if record.transportType == .builtIn {
-                    // Non-removable built-in hardware (MacBook speakers, internal jack) — blank space
-                    Color.clear
-                        .frame(width: 20, height: 20)
-                } else if isCurrentlySelected || isConnected {
-                    // Plugged-in external device — greyed out with tooltip
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.secondary.opacity(0.25))
-                        .frame(width: 20, height: 20)
-                        .help("Plugged in")
-                } else {
-                    // Disconnected device — clickable button to forget
-                    Button {
-                        outputPreferences.forgetDevice(uid: record.uid)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20, height: 20)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Forget \(record.name)")
+            Button {
+                expandedDeviceUID = (isExpanded ? nil : record.uid)
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 11))
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
                 }
+                .foregroundStyle(isExpanded ? Color.primary : Color.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(isExpanded ? Color.secondary.opacity(0.15) : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
             }
-            .frame(width: 20, alignment: .center)
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Close settings for \(record.name)" : "Configure \(record.name)")
+            .frame(width: 50, alignment: .center)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
         .contextMenu {
-            if !isCurrentlySelected {
+            if record.transportType != .builtIn && !isCurrentlySelected {
                 Button(role: .destructive) {
-                    outputPreferences.forgetDevice(uid: record.uid)
+                    deviceToForget = record
                 } label: {
                     Label("Forget Device", systemImage: "trash")
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func deviceConfigDrawer(for record: OutputSelectionPreferences.KnownDeviceRecord) -> some View {
+        let isConnected = deviceManager.outputDevices.contains(where: { $0.uid == record.uid })
+        let isCurrentlySelected = deviceManager.selectedOutput?.uid == record.uid
+
+        VStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 24) {
+                // Left Column: Calls & Ducking + Volume & Hearing Safety
+                VStack(alignment: .leading, spacing: 14) {
+                    // Calls & Ducking
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Calls & Ducking")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("AEC Ducking", isOn: Binding(
+                            get: { outputPreferences.aecDucking(for: record.uid) },
+                            set: {
+                                outputPreferences.setAECDucking($0, for: record.uid)
+                                engine.handleCallAudioStateChanged()
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("When enabled, call audio passes through EQ tap. When disabled, bypasses directly to DAC to prevent echo cancellation ducking.")
+
+                        Toggle("Enable EQ during calls", isOn: Binding(
+                            get: { outputPreferences.enableEQDuringCalls(for: record.uid) },
+                            set: {
+                                outputPreferences.setEnableEQDuringCalls($0, for: record.uid)
+                                engine.updateProcessingConfiguration()
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Applies parametric EQ filter bands to incoming call audio.")
+
+                        Toggle("Enable preamp during calls", isOn: Binding(
+                            get: { outputPreferences.enablePreampDuringCalls(for: record.uid) },
+                            set: {
+                                outputPreferences.setEnablePreampDuringCalls($0, for: record.uid)
+                                engine.updateProcessingConfiguration()
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Preserves the preset's preamp attenuation during calls to prevent sudden volume blasts.")
+
+                        Toggle("Background audio ducking", isOn: Binding(
+                            get: { outputPreferences.backgroundAudioDucking(for: record.uid) },
+                            set: { outputPreferences.setBackgroundAudioDucking($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("macOS dims background apps by -12 dB when your microphone is open.")
+                    }
+
+                    Divider()
+
+                    // Volume & Hearing Safety
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Volume & Hearing Safety")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Remember volume for this device", isOn: Binding(
+                            get: { outputPreferences.rememberVolume(for: record.uid) },
+                            set: { outputPreferences.setRememberVolume($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help(outputPreferences.lastVolume(for: record.uid).map { "Last saved volume: \(Int(round($0 * 100)))%" } ?? "Restores output volume level independently for this device.")
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("Safe volume on connect", isOn: Binding(
+                                get: { outputPreferences.safeVolumeOnConnect(for: record.uid) },
+                                set: { outputPreferences.setSafeVolumeOnConnect($0, for: record.uid) }
+                            ))
+                            .toggleStyle(.checkbox)
+                            .help("Caps initial volume when connecting to protect hearing and IEMs.")
+
+                            if outputPreferences.safeVolumeOnConnect(for: record.uid) {
+                                HStack(spacing: 8) {
+                                    Text("Cap")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Slider(
+                                        value: Binding(
+                                            get: { Double(outputPreferences.safeVolumeLevel(for: record.uid)) },
+                                            set: { outputPreferences.setSafeVolumeLevel(Float($0), for: record.uid) }
+                                        ),
+                                        in: 0.05...1.0,
+                                        step: 0.05
+                                    )
+                                    HStack(spacing: 1) {
+                                        TextField(
+                                            "",
+                                            value: Binding(
+                                                get: { Int(round(outputPreferences.safeVolumeLevel(for: record.uid) * 100)) },
+                                                set: { newVal in
+                                                    let clamped = max(1, min(100, newVal))
+                                                    outputPreferences.setSafeVolumeLevel(Float(clamped) / 100.0, for: record.uid)
+                                                }
+                                            ),
+                                            format: .number
+                                        )
+                                        .textFieldStyle(.plain)
+                                        .font(.caption.monospacedDigit())
+                                        .multilineTextAlignment(.trailing)
+                                        .frame(width: 32)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 2)
+                                        .background(Color(nsColor: .controlBackgroundColor))
+                                        .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                                        Text("%")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.leading, 18)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("Enforce maximum volume limit", isOn: Binding(
+                                get: { outputPreferences.enforceVolumeLimit(for: record.uid) },
+                                set: { outputPreferences.setEnforceVolumeLimit($0, for: record.uid) }
+                            ))
+                            .toggleStyle(.checkbox)
+                            .help("Prevents volume from exceeding this ceiling limit.")
+
+                            if outputPreferences.enforceVolumeLimit(for: record.uid) {
+                                let maxLimit = outputPreferences.maxVolumeLimit(for: record.uid)
+                                HStack(spacing: 8) {
+                                    Text("Ceiling")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Slider(
+                                        value: Binding(
+                                            get: { Double(outputPreferences.maxVolumeLimit(for: record.uid)) },
+                                            set: { outputPreferences.setMaxVolumeLimit(Float($0), for: record.uid) }
+                                        ),
+                                        in: 0.15...1.0,
+                                        step: 0.05
+                                    )
+                                    Text("\(Int(round(maxLimit * 100)))%")
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 38, alignment: .trailing)
+                                }
+                                .padding(.leading, 18)
+                            }
+                        }
+
+                        Toggle("Mute on sample rate change", isOn: Binding(
+                            get: { outputPreferences.muteOnRateChange(for: record.uid) },
+                            set: { outputPreferences.setMuteOnRateChange($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Briefly fades audio for ~300 ms when DAC sample rate switches to prevent digital clicks.")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Right Column: Channel Routing & Balance + Headphone Crossfeed
+                VStack(alignment: .leading, spacing: 14) {
+                    // Channel Routing & Balance
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Channel Routing & Balance")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Mono downmix", isOn: Binding(
+                            get: { outputPreferences.isMonoDownmix(for: record.uid) },
+                            set: {
+                                outputPreferences.setIsMonoDownmix($0, for: record.uid)
+                                if engine.activeOutput?.uid == record.uid {
+                                    engine.updateChannelRouting()
+                                }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Sums left and right channels into dual mono for single-earbud listening or checking phase.")
+
+                        Toggle("Swap stereo channels", isOn: Binding(
+                            get: { outputPreferences.isChannelSwap(for: record.uid) },
+                            set: {
+                                outputPreferences.setIsChannelSwap($0, for: record.uid)
+                                if engine.activeOutput?.uid == record.uid {
+                                    engine.updateChannelRouting()
+                                }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Inverts left and right channels for reverse-wired cables or swapped speaker setups.")
+
+                        Toggle("Auto-lock balance to center", isOn: Binding(
+                            get: { outputPreferences.autoLockBalance(for: record.uid) },
+                            set: {
+                                outputPreferences.setAutoLockBalance($0, for: record.uid)
+                                if engine.activeOutput?.uid == record.uid {
+                                    balanceLockManager.checkAndResetBalance()
+                                }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Detects macOS volume balance drift and keeps hardware balance locked at center.")
+
+                        // Stereo Balance / Pan Slider
+                        VStack(alignment: .leading, spacing: 3) {
+                            let currentPan = outputPreferences.pan(for: record.uid)
+                            HStack {
+                                Text("Balance")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(panDescription(for: currentPan))
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                if abs(currentPan) > 0.001 {
+                                    Button("Reset") {
+                                        outputPreferences.setPan(0.0, for: record.uid)
+                                        if engine.activeOutput?.uid == record.uid {
+                                            engine.updateChannelRouting()
+                                        }
+                                    }
+                                    .font(.caption2)
+                                    .buttonStyle(.borderless)
+                                }
+                            }
+
+                            HStack(spacing: 8) {
+                                Text("L")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.tertiary)
+
+                                Slider(
+                                    value: Binding(
+                                        get: { Double(outputPreferences.pan(for: record.uid)) },
+                                        set: {
+                                            outputPreferences.setPan(Float($0), for: record.uid)
+                                            if engine.activeOutput?.uid == record.uid {
+                                                engine.updateChannelRouting()
+                                            }
+                                        }
+                                    ),
+                                    in: -1.0...1.0
+                                )
+
+                                Text("R")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+
+                    Divider()
+
+                    // Bauer Headphone Crossfeed
+                    VStack(alignment: .leading, spacing: 8) {
+                        let isCrossfeedOn = outputPreferences.isCrossfeedEnabled(for: record.uid)
+                        Text("Headphone Crossfeed")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Enable Crossfeed (Bauer BS2B)", isOn: Binding(
+                            get: { outputPreferences.isCrossfeedEnabled(for: record.uid) },
+                            set: {
+                                outputPreferences.setIsCrossfeedEnabled($0, for: record.uid)
+                                if engine.activeOutput?.uid == record.uid {
+                                    engine.updateChannelRouting()
+                                }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Blends low-frequency spatial cues between channels to reduce headphone listening fatigue.")
+
+                        if isCrossfeedOn {
+                            HStack(spacing: 8) {
+                                Text("Strength")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                Slider(
+                                    value: Binding(
+                                        get: { Double(outputPreferences.crossfeedStrength(for: record.uid)) },
+                                        set: {
+                                            outputPreferences.setCrossfeedStrength(Float($0), for: record.uid)
+                                            if engine.activeOutput?.uid == record.uid {
+                                                engine.updateChannelRouting()
+                                            }
+                                        }
+                                    ),
+                                    in: 0.0...1.0
+                                )
+
+                                HStack(spacing: 1) {
+                                    TextField(
+                                        "",
+                                        value: Binding(
+                                            get: { Int(round(outputPreferences.crossfeedStrength(for: record.uid) * 100)) },
+                                            set: { newVal in
+                                                let clamped = max(0, min(100, newVal))
+                                                outputPreferences.setCrossfeedStrength(Float(clamped) / 100.0, for: record.uid)
+                                                if engine.activeOutput?.uid == record.uid {
+                                                    engine.updateChannelRouting()
+                                                }
+                                            }
+                                        ),
+                                        format: .number
+                                    )
+                                    .textFieldStyle(.plain)
+                                    .font(.caption.monospacedDigit())
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 32)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 2)
+                                    .background(Color(nsColor: .controlBackgroundColor))
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                                    Text("%")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.leading, 18)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if record.transportType != .builtIn {
+                Divider()
+
+                HStack {
+                    Spacer()
+
+                    Button(role: .destructive) {
+                        deviceToForget = record
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "trash")
+                            Text("Forget Device")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.small)
+                    .disabled(isCurrentlySelected)
+                    .help(isCurrentlySelected ? "Cannot forget the currently active output device" : "Remove \(record.name) and all saved preferences")
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            Color(nsColor: NSColor(name: nil, dynamicProvider: { appearance in
+                if appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua {
+                    return NSColor(white: 0.16, alpha: 1.0)
+                } else {
+                    return NSColor(white: 0.93, alpha: 1.0)
+                }
+            }))
+        )
+    }
+
+    private func panDescription(for pan: Float) -> String {
+        let percent = Int(round(abs(pan) * 100))
+        if percent == 0 {
+            return "Center"
+        } else if pan < 0 {
+            return "\(percent)% Left"
+        } else {
+            return "\(percent)% Right"
         }
     }
 
@@ -279,426 +677,5 @@ struct DevicesSettingsView: View {
         }
         openWindow(id: "editor")
         NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
-private struct DeviceCallConfigButton: View {
-    let record: OutputSelectionPreferences.KnownDeviceRecord
-    @ObservedObject var outputPreferences: OutputSelectionPreferences
-    @ObservedObject var engine: EQEngine
-    @ObservedObject var balanceLockManager: BalanceLockManager
-    @State private var showPopover = false
-
-    var body: some View {
-        Button {
-            showPopover.toggle()
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 13))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Configuration for \(record.name)")
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14) {
-                    Text("Device Settings: \(record.name)")
-                        .font(.headline)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        // 1. Calls & Ducking
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Calls & Ducking")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
-
-                            // 1a. AEC Ducking
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("AEC Ducking", isOn: Binding(
-                                    get: { outputPreferences.aecDucking(for: record.uid) },
-                                    set: {
-                                        outputPreferences.setAECDucking($0, for: record.uid)
-                                        engine.handleCallAudioStateChanged()
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text(outputPreferences.aecDucking(for: record.uid)
-                                    ? "Enabled (in EQ) — Call audio passes through EQ tap. Safe on headphones where no acoustic feedback exists."
-                                    : "Disabled (Bypass to DAC) — Call audio bypasses directly to hardware to prevent Apple's echo cancellation from ducking voice on speakers.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // 1b. Enable EQ During Calls
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Enable EQ During Calls", isOn: Binding(
-                                    get: { outputPreferences.enableEQDuringCalls(for: record.uid) },
-                                    set: {
-                                        outputPreferences.setEnableEQDuringCalls($0, for: record.uid)
-                                        engine.updateProcessingConfiguration()
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("Applies parametric EQ filter bands to incoming call audio. Uncheck to run flat pass-through EQ during calls.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // 1c. Enable Preamp During Calls
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Enable Preamp During Calls", isOn: Binding(
-                                    get: { outputPreferences.enablePreampDuringCalls(for: record.uid) },
-                                    set: {
-                                        outputPreferences.setEnablePreampDuringCalls($0, for: record.uid)
-                                        engine.updateProcessingConfiguration()
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("Preserves the preset's preamp attenuation during calls. Keep enabled on headphones to prevent loud sudden volume blasts.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // 1d. Background Audio Ducking
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Background Audio Ducking", isOn: Binding(
-                                    get: { outputPreferences.backgroundAudioDucking(for: record.uid) },
-                                    set: { outputPreferences.setBackgroundAudioDucking($0, for: record.uid) }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("macOS dims background apps (Spotify, YouTube) by -12 dB when your microphone is open. Uncheck to keep background music at full volume.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-
-                        Divider()
-
-                        // 2. Audio Hardware
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Audio Hardware")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
-
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Mute on sample rate change", isOn: Binding(
-                                    get: { outputPreferences.muteOnRateChange(for: record.uid) },
-                                    set: { outputPreferences.setMuteOnRateChange($0, for: record.uid) }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("Briefly fades audio for ~300 ms when the DAC switches sample rates (e.g. 44.1 kHz → 96 kHz) to prevent digital chirps. Uncheck if your DAC has hardware muting relays.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-
-                        Divider()
-
-                        // 3. Channel Routing & Balance
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Channel Routing & Balance")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
-
-                            // Mono downmix
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Mono downmix", isOn: Binding(
-                                    get: { outputPreferences.isMonoDownmix(for: record.uid) },
-                                    set: {
-                                        outputPreferences.setIsMonoDownmix($0, for: record.uid)
-                                        if engine.activeOutput?.uid == record.uid {
-                                            engine.updateChannelRouting()
-                                        }
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("Sums left and right channels into dual mono for single-earbud listening or checking phase.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // Swap stereo channels
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Swap stereo channels", isOn: Binding(
-                                    get: { outputPreferences.isChannelSwap(for: record.uid) },
-                                    set: {
-                                        outputPreferences.setIsChannelSwap($0, for: record.uid)
-                                        if engine.activeOutput?.uid == record.uid {
-                                            engine.updateChannelRouting()
-                                        }
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("Inverts left and right channels for reverse-wired headphone cables or swapped speaker setups.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // Auto-lock balance to center
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Auto-lock balance to center", isOn: Binding(
-                                    get: { outputPreferences.autoLockBalance(for: record.uid) },
-                                    set: {
-                                        outputPreferences.setAutoLockBalance($0, for: record.uid)
-                                        if engine.activeOutput?.uid == record.uid {
-                                            balanceLockManager.checkAndResetBalance()
-                                        }
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("Automatically detects macOS Core Audio volume drift and keeps hardware balance locked at 50/50.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // Stereo Balance / Pan Slider
-                            VStack(alignment: .leading, spacing: 4) {
-                                let currentPan = outputPreferences.pan(for: record.uid)
-                                HStack {
-                                    Text("Stereo Balance")
-                                        .font(.caption.weight(.medium))
-                                    Spacer()
-                                    Text(panDescription(for: currentPan))
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                    if abs(currentPan) > 0.001 {
-                                        Button("Reset") {
-                                            outputPreferences.setPan(0.0, for: record.uid)
-                                            if engine.activeOutput?.uid == record.uid {
-                                                engine.updateChannelRouting()
-                                            }
-                                        }
-                                        .font(.caption2)
-                                        .buttonStyle(.borderless)
-                                    }
-                                }
-
-                                HStack(spacing: 8) {
-                                    Text("L")
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(.secondary)
-
-                                    Slider(
-                                        value: Binding(
-                                            get: { Double(outputPreferences.pan(for: record.uid)) },
-                                            set: {
-                                                outputPreferences.setPan(Float($0), for: record.uid)
-                                                if engine.activeOutput?.uid == record.uid {
-                                                    engine.updateChannelRouting()
-                                                }
-                                            }
-                                        ),
-                                        in: -1.0...1.0
-                                    )
-
-                                    Text("R")
-                                        .font(.caption2.weight(.bold))
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Text("Adjusts stereo balance for this device with zero DSP overhead.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // Bauer Headphone Crossfeed
-                            VStack(alignment: .leading, spacing: 4) {
-                                let isCrossfeedOn = outputPreferences.isCrossfeedEnabled(for: record.uid)
-                                HStack {
-                                    Toggle("Headphone Crossfeed (Bauer BS2B)", isOn: Binding(
-                                        get: { outputPreferences.isCrossfeedEnabled(for: record.uid) },
-                                        set: {
-                                            outputPreferences.setIsCrossfeedEnabled($0, for: record.uid)
-                                            if engine.activeOutput?.uid == record.uid {
-                                                engine.updateChannelRouting()
-                                            }
-                                        }
-                                    ))
-                                    .toggleStyle(.checkbox)
-
-                                    Spacer()
-
-                                    HStack(spacing: 2) {
-                                        TextField(
-                                            "",
-                                            value: Binding(
-                                                get: { Int(round(outputPreferences.crossfeedStrength(for: record.uid) * 100)) },
-                                                set: { newVal in
-                                                    let clamped = max(0, min(100, newVal))
-                                                    outputPreferences.setCrossfeedStrength(Float(clamped) / 100.0, for: record.uid)
-                                                    if engine.activeOutput?.uid == record.uid {
-                                                        engine.updateChannelRouting()
-                                                    }
-                                                }
-                                            ),
-                                            format: .number
-                                        )
-                                        .textFieldStyle(.plain)
-                                        .font(.caption.monospacedDigit())
-                                        .multilineTextAlignment(.trailing)
-                                        .frame(width: 32)
-                                        .padding(.horizontal, 4)
-                                        .padding(.vertical, 2)
-                                        .background(Color(NSColor.controlBackgroundColor))
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        .disabled(!isCrossfeedOn)
-
-                                        Text("%")
-                                            .font(.caption2)
-                                            .foregroundStyle(isCrossfeedOn ? .secondary : .tertiary)
-                                    }
-                                }
-
-                                HStack(spacing: 8) {
-                                    Text("Subtle")
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.tertiary)
-
-                                    Slider(
-                                        value: Binding(
-                                            get: { Double(outputPreferences.crossfeedStrength(for: record.uid)) },
-                                            set: {
-                                                outputPreferences.setCrossfeedStrength(Float($0), for: record.uid)
-                                                if engine.activeOutput?.uid == record.uid {
-                                                    engine.updateChannelRouting()
-                                                }
-                                            }
-                                        ),
-                                        in: 0.0...1.0
-                                    )
-                                    .disabled(!isCrossfeedOn)
-
-                                    Text("Strong")
-                                        .font(.system(size: 9))
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .opacity(isCrossfeedOn ? 1.0 : 0.4)
-
-                                Text("Blends low-frequency spatial cues between channels to reduce headphone listening fatigue and create a natural acoustic soundstage.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .opacity(outputPreferences.isCrossfeedEnabled(for: record.uid) ? 1.0 : 0.7)
-                        }
-
-                        Divider()
-
-                        // 4. Volume & Hearing Safety
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Volume & Hearing Safety")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.secondary)
-
-                            // 4a. Remember volume
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Remember volume for this device", isOn: Binding(
-                                    get: { outputPreferences.rememberVolume(for: record.uid) },
-                                    set: { outputPreferences.setRememberVolume($0, for: record.uid) }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                if let last = outputPreferences.lastVolume(for: record.uid) {
-                                    Text("Restores output volume level for this device (last saved: \(Int(round(last * 100)))%).")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                } else {
-                                    Text("Restores output volume level independently for this device.")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-
-                            // 4b. Safe volume on connect
-                            VStack(alignment: .leading, spacing: 3) {
-                                Toggle("Safe volume on connect (30% cap)", isOn: Binding(
-                                    get: { outputPreferences.safeVolumeOnConnect(for: record.uid) },
-                                    set: { outputPreferences.setSafeVolumeOnConnect($0, for: record.uid) }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                Text("Caps initial volume to 30% if louder on connect, preventing ear-bleed blasts when plugging in sensitive IEMs.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            // 4c. Volume Limit Ceiling
-                            VStack(alignment: .leading, spacing: 4) {
-                                Toggle("Enforce maximum volume limit", isOn: Binding(
-                                    get: { outputPreferences.enforceVolumeLimit(for: record.uid) },
-                                    set: { outputPreferences.setEnforceVolumeLimit($0, for: record.uid) }
-                                ))
-                                .toggleStyle(.checkbox)
-
-                                if outputPreferences.enforceVolumeLimit(for: record.uid) {
-                                    let maxLimit = outputPreferences.maxVolumeLimit(for: record.uid)
-                                    HStack {
-                                        Text("Volume Ceiling")
-                                            .font(.caption)
-                                        Spacer()
-                                        Text("\(Int(round(maxLimit * 100)))%")
-                                            .font(.caption.monospacedDigit())
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.leading, 18)
-
-                                    Slider(
-                                        value: Binding(
-                                            get: { Double(outputPreferences.maxVolumeLimit(for: record.uid)) },
-                                            set: { outputPreferences.setMaxVolumeLimit(Float($0), for: record.uid) }
-                                        ),
-                                        in: 0.15...1.0,
-                                        step: 0.05
-                                    )
-                                    .padding(.leading, 18)
-
-                                    Text("Volume keys and apps cannot push volume past this ceiling. Protects ears and IEM drivers.")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                        .padding(.leading, 18)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-                    }
-                }
-                .padding(16)
-            }
-            .frame(width: 340)
-            .frame(maxHeight: 520)
-        }
-    }
-
-    private func panDescription(for pan: Float) -> String {
-        let percent = Int(round(abs(pan) * 100))
-        if percent == 0 {
-            return "Center"
-        } else if pan < 0 {
-            return "\(percent)% Left"
-        } else {
-            return "\(percent)% Right"
-        }
     }
 }

@@ -105,52 +105,40 @@ public final class AppVolumeStore: ObservableObject {
     public func setVolume(_ value: Float, for bundleID: String) {
         let clamped = max(0.0, min(1.5, value))
         var entry = volumes[bundleID] ?? AppVolume()
-        let oldNeutral = entry.isNeutral
         entry.volume = clamped
-        apply(entry, for: bundleID, previousNeutral: oldNeutral)
+        apply(entry, for: bundleID)
     }
 
     public func setMuted(_ isMuted: Bool, for bundleID: String) {
         var entry = volumes[bundleID] ?? AppVolume()
-        let oldNeutral = entry.isNeutral
         entry.isMuted = isMuted
-        apply(entry, for: bundleID, previousNeutral: oldNeutral)
+        apply(entry, for: bundleID)
     }
 
     public func toggleMute(for bundleID: String) {
         var entry = volumes[bundleID] ?? AppVolume()
-        let oldNeutral = entry.isNeutral
         entry.isMuted.toggle()
-        apply(entry, for: bundleID, previousNeutral: oldNeutral)
+        apply(entry, for: bundleID)
     }
 
     public func reset(for bundleID: String) {
-        guard let old = volumes[bundleID] else { return }
+        guard volumes[bundleID] != nil else { return }
         volumes.removeValue(forKey: bundleID)
         scheduleSave()
-        if !old.isNeutral {
-            onConfigurationChange?()
-        } else {
-            onGainChange?(bundleID, 1.0, false)
-        }
+        onGainChange?(bundleID, 1.0, false)
     }
 
-    private func apply(_ entry: AppVolume, for bundleID: String, previousNeutral: Bool) {
-        let isNowNeutral = entry.isNeutral
-        if isNowNeutral {
+    private func apply(_ entry: AppVolume, for bundleID: String) {
+        if entry.isNeutral {
             volumes.removeValue(forKey: bundleID)
         } else {
             volumes[bundleID] = entry
         }
         scheduleSave()
 
-        if isNowNeutral != previousNeutral {
-            onConfigurationChange?()
-        } else {
-            // Inform audio thread of live gain update (lock-free, zero tap restart)
-            let gain = entry.isMuted ? 0.0 : VolumeTaper.gain(position: entry.volume)
-            onGainChange?(bundleID, gain, entry.isMuted)
-        }
+        // Inform audio thread of live gain update (lock-free, zero tap restart, 100% uninterrupted)
+        let gain = entry.isMuted ? 0.0 : VolumeTaper.gain(position: entry.volume)
+        onGainChange?(bundleID, gain, entry.isMuted)
     }
 
     private func scheduleSave() {

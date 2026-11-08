@@ -197,6 +197,14 @@ struct anmolAudioApp: App {
     }
 
     init() {
+        if let idx = CommandLine.arguments.firstIndex(of: "--crash-guard") {
+            let parentPID = CommandLine.arguments.indices.contains(idx + 1) ? (pid_t(CommandLine.arguments[idx + 1]) ?? 0) : 0
+            let mute = CommandLine.arguments.contains("--mute")
+            let pause = CommandLine.arguments.contains("--pause")
+            CrashGuard.runWatchdogLoop(parentPID: parentPID, muteOnCrash: mute, pauseOnCrash: pause)
+            exit(0)
+        }
+
         bootLog.info("[anmolAudio] Booted: Process Tap + vDSP biquad EQ + HAL output (no AVAudioEngine)")
         LurarMigration.migrateUserDefaultsIfNeeded()
         // DeviceManager needs the user's output preferences (last-used UID,
@@ -251,6 +259,7 @@ final class anmolAudioAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        CrashGuard.shared.signalCleanExit()
         let engineWired = (engine != nil)
         let engineRunning = engine?.isRunning ?? false
         launchLog.info("applicationShouldTerminate: engineWired=\(engineWired) engineRunning=\(engineRunning)")
@@ -361,9 +370,7 @@ private struct MenuBarLabel: View {
                     e?.handleCallAudioStateChanged()
                     vm?.updateVoIPBundleIDs(VoIPAppsStore.shared.voipBundleIDs)
                 }
-                appVolumeStore.onConfigurationChange = { [weak e = engine] in
-                    e?.reEnumerateTapTargets()
-                }
+                appVolumeStore.onConfigurationChange = nil
                 appVolumeStore.onGainChange = { [weak e = engine] bundleID, gain, isMuted in
                     e?.setLiveAppVolume(bundleID: bundleID, gain: gain, isMuted: isMuted)
                 }
@@ -401,6 +408,10 @@ private struct MenuBarLabel: View {
                 // subscriptions bound to a transient publisher silently
                 // never observe the persistent engine.
                 burnInTracker.observe(engine: engine)
+                CrashGuard.shared.syncWithPreferences(
+                    muteOnCrash: outputPreferences.muteOnCrash,
+                    pauseOnCrash: outputPreferences.pauseOnCrash
+                )
                 runLaunchCoordinator()
             }
             .onChange(of: deviceManager.selectedOutput) { oldOut, newOut in

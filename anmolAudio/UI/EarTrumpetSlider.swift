@@ -26,8 +26,8 @@ struct EarTrumpetSlider: View {
 
             // Peak level bar inside the track (bounces with real-time music up to current volume)
             let activePeak = (!isMuted && !isBypassed) ? max(0.0, min(1.0, peakLevel)) : 0.0
-            // sqrt expansion gives punchy, natural VU-meter ballistics, scaled directly to the fader fill
-            let peakWidth = max(0, min(fillWidth, fillWidth * CGFloat(sqrt(activePeak))))
+            // Linear VU-meter ballistics, scaled directly to the fader fill
+            let peakWidth = max(0, min(fillWidth, fillWidth * CGFloat(activePeak)))
 
             ZStack(alignment: .leading) {
                 // 1. Background Track Line (black in white mode, white in black mode)
@@ -48,15 +48,19 @@ struct EarTrumpetSlider: View {
                             .fill(Color.primary.opacity(0.30))
                             .frame(width: fillWidth, height: 4)
                     } else {
-                        // Segmented: Monochrome up to 100%, subtle amber for boost portion
-                        HStack(spacing: 0) {
+                        // Segmented: Monochrome up to 100%, subtle amber for boost portion with seamless junction
+                        ZStack(alignment: .leading) {
                             Capsule()
                                 .fill(Color.primary.opacity(0.30))
-                                .frame(width: notchX, height: 4)
-                            Capsule()
+                                .frame(width: fillWidth, height: 4)
+
+                            Rectangle()
                                 .fill(Color.orange.opacity(0.40))
-                                .frame(width: fillWidth - notchX, height: 4)
+                                .frame(width: max(0, fillWidth - notchX), height: 4)
+                                .offset(x: notchX)
                         }
+                        .clipShape(Capsule())
+                        .frame(width: fillWidth, height: 4)
                     }
                 }
 
