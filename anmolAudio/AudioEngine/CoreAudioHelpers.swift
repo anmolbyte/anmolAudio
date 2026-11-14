@@ -465,6 +465,199 @@ enum CoreAudioVolume {
     }
 }
 
+// MARK: - Input volume, mute & sample rate
+
+enum CoreAudioInputVolume {
+    /// Reads hardware input volume scalar (0.0 ... 1.0) on the input scope.
+    static func scalar(for id: AudioDeviceID) -> Float? {
+        if let main = channelScalar(for: id, element: kAudioObjectPropertyElementMain) {
+            return main
+        }
+        let channelCount = CoreAudioDevices.streamChannelCount(id: id, scope: kAudioObjectPropertyScopeInput)
+        let maxChannels = channelCount > 0 ? UInt32(channelCount) : 2
+        var values: [Float] = []
+        for element in 1...maxChannels {
+            if let v = channelScalar(for: id, element: element) { values.append(v) }
+        }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Float(values.count)
+    }
+
+    /// Sets hardware input volume scalar (0.0 ... 1.0) on the input scope. Returns true if successful.
+    @discardableResult
+    static func setScalar(_ scalar: Float, for id: AudioDeviceID) -> Bool {
+        let clamped = max(0.0, min(1.0, Float32(scalar)))
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectHasProperty(id, &addr) {
+            var isSettable: DarwinBoolean = false
+            if AudioObjectIsPropertySettable(id, &addr, &isSettable) == noErr, isSettable.boolValue {
+                var val = clamped
+                let size = UInt32(MemoryLayout<Float32>.size)
+                if AudioObjectSetPropertyData(id, &addr, 0, nil, size, &val) == noErr {
+                    return true
+                }
+            }
+        }
+        // Fall back to per-channel elements
+        var success = false
+        var val = clamped
+        let size = UInt32(MemoryLayout<Float32>.size)
+        for element in [UInt32(1), UInt32(2)] {
+            var elAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyVolumeScalar,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: element
+            )
+            if AudioObjectHasProperty(id, &elAddr) {
+                var isSettable: DarwinBoolean = false
+                if AudioObjectIsPropertySettable(id, &elAddr, &isSettable) == noErr, isSettable.boolValue {
+                    if AudioObjectSetPropertyData(id, &elAddr, 0, nil, size, &val) == noErr {
+                        success = true
+                    }
+                }
+            }
+        }
+        return success
+    }
+
+    /// Whether the input device is muted on hardware.
+    static func isMuted(for id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectHasProperty(id, &addr) {
+            var muted: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &muted) == noErr {
+                return muted != 0
+            }
+        }
+        for element in [UInt32(1), UInt32(2)] {
+            var elAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyMute,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: element
+            )
+            if AudioObjectHasProperty(id, &elAddr) {
+                var muted: UInt32 = 0
+                var size = UInt32(MemoryLayout<UInt32>.size)
+                if AudioObjectGetPropertyData(id, &elAddr, 0, nil, &size, &muted) == noErr {
+                    return muted != 0
+                }
+            }
+        }
+        return false
+    }
+
+    /// Sets the hardware input mute state.
+    @discardableResult
+    static func setMuted(_ muted: Bool, for id: AudioDeviceID) -> Bool {
+        var didWork = false
+        var val: UInt32 = muted ? 1 : 0
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectHasProperty(id, &addr) {
+            var isSettable: DarwinBoolean = false
+            if AudioObjectIsPropertySettable(id, &addr, &isSettable) == noErr, isSettable.boolValue {
+                if AudioObjectSetPropertyData(id, &addr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &val) == noErr {
+                    didWork = true
+                }
+            }
+        }
+        for element in [UInt32(1), UInt32(2)] {
+            var elAddr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyMute,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: element
+            )
+            if AudioObjectHasProperty(id, &elAddr) {
+                var isSettable: DarwinBoolean = false
+                if AudioObjectIsPropertySettable(id, &elAddr, &isSettable) == noErr, isSettable.boolValue {
+                    if AudioObjectSetPropertyData(id, &elAddr, 0, nil, UInt32(MemoryLayout<UInt32>.size), &val) == noErr {
+                        didWork = true
+                    }
+                }
+            }
+        }
+        return didWork
+    }
+
+    /// Queries the current nominal sample rate (e.g. 48000 Hz).
+    static func nominalSampleRate(for id: AudioDeviceID) -> Double? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectHasProperty(id, &addr) else { return nil }
+        var rate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &rate) == noErr else { return nil }
+        return Double(rate)
+    }
+
+    /// Queries the supported sample rates exposed by the hardware.
+    static func availableSampleRates(for id: AudioDeviceID) -> [Double] {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyAvailableNominalSampleRates,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return [] }
+        let count = Int(size) / MemoryLayout<AudioValueRange>.size
+        var ranges = [AudioValueRange](repeating: AudioValueRange(mMinimum: 0, mMaximum: 0), count: count)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &ranges) == noErr else { return [] }
+        var rates: Set<Double> = []
+        for r in ranges {
+            if r.mMinimum == r.mMaximum {
+                rates.insert(r.mMinimum)
+            } else {
+                rates.insert(r.mMinimum)
+                rates.insert(r.mMaximum)
+            }
+        }
+        return rates.sorted()
+    }
+
+    /// Sets the nominal sample rate on the hardware.
+    @discardableResult
+    static func setNominalSampleRate(_ rate: Double, for id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectHasProperty(id, &addr) else { return false }
+        var isSettable: DarwinBoolean = false
+        guard AudioObjectIsPropertySettable(id, &addr, &isSettable) == noErr, isSettable.boolValue else { return false }
+        var val: Float64 = Float64(rate)
+        return AudioObjectSetPropertyData(id, &addr, 0, nil, UInt32(MemoryLayout<Float64>.size), &val) == noErr
+    }
+
+    private static func channelScalar(for id: AudioDeviceID, element: AudioObjectPropertyElement) -> Float? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: element
+        )
+        guard AudioObjectHasProperty(id, &addr) else { return nil }
+        var value: Float32 = 0
+        var size = UInt32(MemoryLayout<Float32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr else { return nil }
+        return Float(value)
+    }
+}
+
 // MARK: - HAL AU helpers
 
 enum AUHAL {

@@ -48,6 +48,7 @@ targets:
         LSMinimumSystemVersion: "14.2"
         LSApplicationCategoryType: "public.app-category.music"
         NSAudioCaptureUsageDescription: "anmolAudio captures system audio via a Core Audio process tap so it can apply EQ before routing audio to your output device."
+        NSMicrophoneUsageDescription: "anmolAudio uses the microphone for live input level testing, device metering, and call handling."
         NSHighResolutionCapable: true
         NSUbiquitousContainers:
           iCloud.app.anmol.anmolAudio:

@@ -148,15 +148,17 @@ final class ProcessTapInput {
         var systemProcesses: [AudioObjectID] = []
 
         for obj in validProcesses {
-            if let bid = AudioProcessInfo.bundleID(for: obj), !bid.isEmpty {
+            let rawBid = AudioProcessInfo.bundleID(for: obj)
+            if let bid = rawBid, !bid.isEmpty {
                 allProcessesByBundleID[bid, default: []].append(obj)
             }
             guard let processPid = AudioProcessInfo.pid(for: obj) else {
                 systemProcesses.append(obj)
                 continue
             }
-            let isRegularApp = (NSRunningApplication(processIdentifier: processPid)?.activationPolicy == .regular)
-            let rawBid = AudioProcessInfo.bundleID(for: obj)
+            let ownerPid = AudioProcessInfo.responsiblePID(for: processPid)
+            let isRegularApp = (NSRunningApplication(processIdentifier: ownerPid)?.activationPolicy == .regular)
+                || (NSRunningApplication(processIdentifier: processPid)?.activationPolicy == .regular)
             let hasCustomVolume = (rawBid != nil && appVolumes[rawBid!] != nil)
 
             if let bid = rawBid, !bid.isEmpty, (isRegularApp || hasCustomVolume) {

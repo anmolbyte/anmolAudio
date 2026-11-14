@@ -9,6 +9,7 @@ private let launchLog = Logger(subsystem: "app.anmol.anmolAudio", category: "Lau
 struct anmolAudioApp: App {
     @NSApplicationDelegateAdaptor(anmolAudioAppDelegate.self) private var appDelegate
     @StateObject private var outputPreferences: OutputSelectionPreferences
+    @StateObject private var inputPreferences: InputSelectionPreferences
     @StateObject private var deviceManager: DeviceManager
     @StateObject private var syncSettings: PresetSyncSettings
     @StateObject private var presetStore: PresetStore
@@ -35,7 +36,8 @@ struct anmolAudioApp: App {
                 presetCatalog: presetCatalog,
                 devicePresetMemory: devicePresetMemory,
                 appVolumeStore: appVolumeStore,
-                outputPreferences: outputPreferences
+                outputPreferences: outputPreferences,
+                inputPreferences: inputPreferences
             )
         } label: {
             MenuBarLabel(
@@ -170,6 +172,7 @@ struct anmolAudioApp: App {
                 devicePresetMemory: devicePresetMemory,
                 excludedAppsStore: excludedAppsStore,
                 outputPreferences: outputPreferences,
+                inputPreferences: inputPreferences,
                 burnInTracker: burnInTracker,
                 deviceManager: deviceManager,
                 engine: engine,
@@ -212,8 +215,10 @@ struct anmolAudioApp: App {
         // device. Construct prefs eagerly and share the same instance with
         // the @StateObject wrapper.
         let prefs = OutputSelectionPreferences()
+        let inPrefs = InputSelectionPreferences()
         _outputPreferences = StateObject(wrappedValue: prefs)
-        _deviceManager = StateObject(wrappedValue: DeviceManager(preferences: prefs))
+        _inputPreferences = StateObject(wrappedValue: inPrefs)
+        _deviceManager = StateObject(wrappedValue: DeviceManager(preferences: prefs, inputPreferences: inPrefs))
         _balanceLockManager = StateObject(wrappedValue: BalanceLockManager(preferences: prefs))
         _outputVolumeMonitor = StateObject(wrappedValue: OutputVolumeMonitor(preferences: prefs))
         // PresetStore needs the sync settings at init time so it can pick the

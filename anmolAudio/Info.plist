@@ -30,6 +30,8 @@
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>anmolAudio captures system audio via a Core Audio process tap so it can apply EQ before routing audio to your output device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>anmolAudio uses the microphone for live input level testing, device metering, and call handling.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSUbiquitousContainers</key>

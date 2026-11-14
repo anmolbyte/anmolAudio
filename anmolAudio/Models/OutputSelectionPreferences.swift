@@ -398,7 +398,7 @@ final class OutputSelectionPreferences: ObservableObject {
                     rememberVolume: true,
                     safeVolumeOnConnect: true,
                     enforceVolumeLimit: false,
-                    maxVolumeLimit: 0.60,
+                    maxVolumeLimit: 1.0,
                     isCrossfeedEnabled: false,
                     crossfeedStrength: 0.50
                 ))
@@ -676,7 +676,7 @@ final class OutputSelectionPreferences: ObservableObject {
     }
 
     func maxVolumeLimit(for uid: String) -> Float {
-        knownDevices.first(where: { $0.uid == uid })?.maxVolumeLimit ?? 0.60
+        knownDevices.first(where: { $0.uid == uid })?.maxVolumeLimit ?? 1.0
     }
 
     func setMaxVolumeLimit(_ value: Float, for uid: String) {

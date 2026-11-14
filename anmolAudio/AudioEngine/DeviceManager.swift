@@ -24,7 +24,9 @@ final class DeviceManager: ObservableObject {
         didSet {
             guard let newInput = selectedInput else { return }
             guard newInput.uid != oldValue?.uid else { return }
+            inputPreferences.lastInputUID = newInput.uid
             syncSystemDefaultInputIfNeeded(to: newInput)
+            applyInputPreferences(for: newInput)
         }
     }
 
@@ -34,6 +36,7 @@ final class DeviceManager: ObservableObject {
     var onTopologyChange: (() -> Void)?
 
     private let preferences: OutputSelectionPreferences
+    let inputPreferences: InputSelectionPreferences
     private var topologyListener: DeviceChangeListener?
     private var defaultOutputListener: DefaultOutputDeviceListener?
     private var defaultInputListener: DefaultInputDeviceListener?
@@ -47,9 +50,11 @@ final class DeviceManager: ObservableObject {
     /// cares about, or whether it was just our private tap aggregate
     /// churning during an engine restart.
     private var lastVisibleUIDs: [String] = []
+    private var lastVisibleInputUIDs: [String] = []
 
-    init(preferences: OutputSelectionPreferences) {
+    init(preferences: OutputSelectionPreferences, inputPreferences: InputSelectionPreferences) {
         self.preferences = preferences
+        self.inputPreferences = inputPreferences
         refresh(initial: true)
         topologyListener = DeviceChangeListener { [weak self] in
             Task { @MainActor in self?.refresh(initial: false) }
@@ -76,7 +81,10 @@ final class DeviceManager: ObservableObject {
             .filter {
                 !$0.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
                 !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
-                !$0.name.contains("System Tap")
+                !$0.uid.hasPrefix("CADefaultDeviceAggregate") &&
+                !$0.uid.contains("Aggregate") &&
+                !$0.name.contains("System Tap") &&
+                !$0.name.contains("Aggregate")
             }
             .filter { device in
                 let policy = preferences.effectivePolicy(for: device)
@@ -95,14 +103,34 @@ final class DeviceManager: ObservableObject {
 
         self.outputDevices = outs
 
-        let ins = all
+        let allIns = all
             .filter(\.hasInput)
             .filter {
                 !$0.uid.hasPrefix("app.anmol.anmolAudio.aggregate.") &&
                 !$0.uid.hasPrefix("app.lurar.Lurar.aggregate.") &&
-                !$0.name.contains("System Tap")
+                !$0.uid.hasPrefix("CADefaultDeviceAggregate") &&
+                !$0.uid.contains("Aggregate") &&
+                !$0.name.contains("System Tap") &&
+                !$0.name.contains("Aggregate")
+            }
+
+        // Only record genuine visible physical input devices
+        for device in allIns {
+            inputPreferences.recordSeen(device: device)
+        }
+
+        // Filter out ignored / blocked devices from visible picker unless currently active
+        let ins = allIns
+            .filter { device in
+                let policy = inputPreferences.effectivePolicy(for: device)
+                return policy != .ignored || device.uid == selectedInput?.uid
             }
             .sorted { $0.name.localizedCompare($1.name) == .orderedAscending }
+
+        let previousInputUIDs = lastVisibleInputUIDs
+        let newInputUIDs = ins.map(\.uid)
+        let addedInputUIDs = previousInputUIDs.isEmpty ? [] : Set(newInputUIDs).subtracting(previousInputUIDs)
+        lastVisibleInputUIDs = newInputUIDs
 
         self.inputDevices = ins
         self.isLidClosed = ClamshellMonitor.isLidClosed
@@ -115,15 +143,30 @@ final class DeviceManager: ObservableObject {
         }
 
         let usableIns = ins.filter(isUsableInput)
-        let systemDefault = CoreAudioDevices.defaultInput()
-            .flatMap { def in ins.first { $0.id == def.id || $0.uid == def.uid } }
 
-        if let sel = selectedInput, let still = ins.first(where: { $0.uid == sel.uid }), isUsableInput(still) {
+        // Opt-in auto-switch for input
+        let newlyConnectedInput = (!initial && inputPreferences.switchesToNewDevices)
+            ? ins.first(where: { addedInputUIDs.contains($0.uid) && inputPreferences.effectivePolicy(for: $0) == .auto && isUsableInput($0) })
+            : nil
+
+        if let newlyConnectedInput {
+            selectedInput = newlyConnectedInput
+        } else if let sel = selectedInput, let still = ins.first(where: { $0.uid == sel.uid }), isUsableInput(still) {
             selectedInput = still
-        } else if let sysDef = systemDefault, isUsableInput(sysDef) {
-            selectedInput = sysDef
         } else {
-            selectedInput = usableIns.first ?? systemDefault ?? ins.first
+            let remembered = inputPreferences.lastInputUID
+                .flatMap { uid in ins.first { $0.uid == uid && inputPreferences.effectivePolicy(for: $0) != .ignored && isUsableInput($0) } }
+            let systemDefault = CoreAudioDevices.defaultInput()
+                .flatMap { def in ins.first { ($0.id == def.id || $0.uid == def.uid) && inputPreferences.effectivePolicy(for: $0) == .auto && isUsableInput($0) } }
+            let firstValid = usableIns.first
+
+            let preferred: AudioDevice?
+            if inputPreferences.followsSystemDefault {
+                preferred = systemDefault ?? remembered ?? firstValid ?? ins.first
+            } else {
+                preferred = remembered ?? systemDefault ?? firstValid ?? ins.first
+            }
+            selectedInput = preferred
         }
 
         // Opt-in auto-switch: when a brand-new output device connects — e.g. a
@@ -279,8 +322,34 @@ final class DeviceManager: ObservableObject {
             }
         }
 
-        log.info("System default input changed → \(resolved.name, privacy: .public); updating selectedInput")
-        selectedInput = resolved
+        // Guard against auto-switching to blocked or manual-only devices
+        let effectivePolicy = inputPreferences.effectivePolicy(for: resolved)
+        guard effectivePolicy == .auto else {
+            log.info("System default input changed to \(resolved.name, privacy: .public), but device policy is \(effectivePolicy.rawValue) — staying on current input")
+            return
+        }
+
+        if inputPreferences.followsSystemDefault {
+            log.info("System default input changed → \(resolved.name, privacy: .public); following")
+            selectedInput = resolved
+        } else {
+            log.info("System default input changed → \(resolved.name, privacy: .public); policy is stay — no action")
+        }
+    }
+
+    func applyInputPreferences(for device: AudioDevice) {
+        if inputPreferences.isSupremeMicMuted {
+            CoreAudioInputVolume.setMuted(true, for: device.id)
+        }
+        if inputPreferences.rememberVolume(for: device.uid), let lastVol = inputPreferences.lastVolume(for: device.uid) {
+            CoreAudioInputVolume.setScalar(lastVol, for: device.id)
+        }
+        if inputPreferences.enforceVolumeLimit(for: device.uid) {
+            let limit = inputPreferences.maxVolumeLimit(for: device.uid)
+            if let cur = CoreAudioInputVolume.scalar(for: device.id), cur > limit {
+                CoreAudioInputVolume.setScalar(limit, for: device.id)
+            }
+        }
     }
 
     private func handleClamshellStateChanged(isClosed: Bool) {

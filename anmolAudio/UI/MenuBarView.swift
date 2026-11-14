@@ -11,6 +11,7 @@ struct MenuBarView: View {
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var appVolumeStore: AppVolumeStore
     @ObservedObject var outputPreferences: OutputSelectionPreferences
+    @ObservedObject var inputPreferences: InputSelectionPreferences
 
     @Environment(\.openWindow) private var openWindow
 
@@ -200,41 +201,11 @@ struct MenuBarView: View {
         .padding(14)
         .frame(width: 340)
         .background(hiddenShortcuts)
-        .task {
-            // External revoke is rare but possible (System Settings toggle
-            // off while the app is running). Refresh on each reopen so we
-            // can flip back to the gate rather than serving broken controls.
-            permissionState = AudioCapturePermission.preflight()
-            wireUp()
-            applySelectedPreset()
-            reevaluateSuggestion()
-            runningAudioApps = AudioProcessInfo.runningAudioApps()
-            if isAppVolumesExpanded {
-                startMetering()
-            }
-            processListListener = AudioProcessListChangeListener {
-                Task { @MainActor in
-                    runningAudioApps = AudioProcessInfo.runningAudioApps()
-                }
-            }
-        }
         .onAppear {
-            if isAppVolumesExpanded {
-                startMetering()
-            }
+            handleAppear()
         }
         .onDisappear {
-            stopMetering()
-            hoveredAppBundleID = nil
-            processListListener = nil
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification)) { _ in
-            stopMetering()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeOcclusionStateNotification)) { note in
-            if let win = note.object as? NSWindow, (!win.occlusionState.contains(.visible) || !win.isVisible) {
-                stopMetering()
-            }
+            handleDisappear()
         }
         .onChange(of: isAppVolumesExpanded) { _, expanded in
             if expanded {
@@ -861,29 +832,82 @@ struct MenuBarView: View {
     }
 
     private var inputPicker: some View {
-        HStack(spacing: 8) {
-            Text("Input")
-                .frame(width: labelColumnWidth, alignment: .leading)
-            FixedWidthPopUp(
-                width: pickerWidth,
-                selection: Binding(
-                    get: { deviceManager.selectedInput?.uid ?? "" },
-                    set: { uid in
-                        guard let device = deviceManager.inputDevices.first(where: { $0.uid == uid }) else { return }
-                        if deviceManager.isLidClosed && (device.transportType == .builtIn || device.uid == "BuiltInMicrophoneDevice") {
-                            return
+        VStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Input")
+                    .frame(width: labelColumnWidth, alignment: .leading)
+                FixedWidthPopUp(
+                    width: pickerWidth - 34,
+                    selection: Binding(
+                        get: { deviceManager.selectedInput?.uid ?? "" },
+                        set: { uid in
+                            guard let device = deviceManager.inputDevices.first(where: { $0.uid == uid }) else { return }
+                            if deviceManager.isLidClosed && (device.transportType == .builtIn || device.uid == "BuiltInMicrophoneDevice") {
+                                return
+                            }
+                            deviceManager.selectedInput = device
                         }
-                        deviceManager.selectedInput = device
+                    ),
+                    items: deviceManager.inputDevices.map { device in
+                        let isUnavailable = deviceManager.isLidClosed && (device.transportType == .builtIn || device.uid == "BuiltInMicrophoneDevice")
+                        let title = isUnavailable ? "\(device.name) (Lid closed)" : device.name
+                        return .init(id: device.uid, title: title, isEnabled: !isUnavailable)
                     }
-                ),
-                items: deviceManager.inputDevices.map { device in
-                    let isUnavailable = deviceManager.isLidClosed && (device.transportType == .builtIn || device.uid == "BuiltInMicrophoneDevice")
-                    let title = isUnavailable ? "\(device.name) (Lid closed)" : device.name
-                    return .init(id: device.uid, title: title, isEnabled: !isUnavailable)
+                )
+                .disabled(deviceManager.inputDevices.isEmpty)
+                .help("Pick the system audio input device")
+
+                // Supreme Mic Mute button
+                Button {
+                    let next = !inputPreferences.isSupremeMicMuted
+                    inputPreferences.isSupremeMicMuted = next
+                    if let dev = deviceManager.selectedInput {
+                        CoreAudioInputVolume.setMuted(next, for: dev.id)
+                    }
+                } label: {
+                    Image(systemName: inputPreferences.isSupremeMicMuted ? "mic.slash.fill" : "mic.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(inputPreferences.isSupremeMicMuted ? Color.red : Color.primary)
+                        .frame(width: 24, height: 24)
+                        .background(inputPreferences.isSupremeMicMuted ? Color.red.opacity(0.18) : Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 5)
+                                .stroke(inputPreferences.isSupremeMicMuted ? Color.red.opacity(0.4) : Color.secondary.opacity(0.18), lineWidth: 1)
+                        )
                 }
-            )
-            .disabled(deviceManager.inputDevices.isEmpty)
-            .help("Pick the system audio input device")
+                .buttonStyle(.plain)
+                .help(inputPreferences.isSupremeMicMuted ? "Supreme Mic Mute is ON (persists across device switches). Click to unmute." : "Supreme Mic Mute. Mutes active microphone and persists across device switches.")
+            }
+
+            // Input Volume Slider Row
+            if let dev = deviceManager.selectedInput {
+                let liveVol = CoreAudioInputVolume.scalar(for: dev.id) ?? inputPreferences.lastVolume(for: dev.uid) ?? 1.0
+                HStack(spacing: 8) {
+                    Image(systemName: inputPreferences.isSupremeMicMuted ? "mic.slash" : "mic")
+                        .font(.caption2)
+                        .foregroundStyle(inputPreferences.isSupremeMicMuted ? .red : .secondary)
+                        .frame(width: labelColumnWidth, alignment: .leading)
+
+                    Slider(
+                        value: Binding(
+                            get: { Double(liveVol) },
+                            set: { newVal in
+                                let clamped = Float(newVal)
+                                CoreAudioInputVolume.setScalar(clamped, for: dev.id)
+                                inputPreferences.setLastVolume(clamped, for: dev.uid)
+                            }
+                        ),
+                        in: 0.0...1.0
+                    )
+                    .disabled(inputPreferences.isSupremeMicMuted)
+
+                    Text("\(Int(round(liveVol * 100)))%")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, alignment: .trailing)
+                }
+            }
         }
     }
 
@@ -1151,6 +1175,28 @@ struct MenuBarView: View {
         }
     }
 
+    private func handleAppear() {
+        permissionState = AudioCapturePermission.preflight()
+        wireUp()
+        applySelectedPreset()
+        reevaluateSuggestion()
+        runningAudioApps = AudioProcessInfo.runningAudioApps()
+        if isAppVolumesExpanded {
+            startMetering()
+        }
+        processListListener = AudioProcessListChangeListener {
+            Task { @MainActor in
+                runningAudioApps = AudioProcessInfo.runningAudioApps()
+            }
+        }
+    }
+
+    private func handleDisappear() {
+        stopMetering()
+        hoveredAppBundleID = nil
+        processListListener = nil
+    }
+
     private func startMetering() {
         guard meterTimer == nil else { return }
         engine.setAppMeteringActive(true)
@@ -1180,7 +1226,6 @@ struct MenuBarView: View {
         meterTimer = nil
         engine.setAppMeteringActive(false)
         peakLevels.removeAll()
-        processListListener = nil
     }
 
 }

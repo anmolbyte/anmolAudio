@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DevicesSettingsView: View {
     @ObservedObject var outputPreferences: OutputSelectionPreferences
+    @ObservedObject var inputPreferences: InputSelectionPreferences
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var presetStore: PresetStore
@@ -11,7 +12,11 @@ struct DevicesSettingsView: View {
 
     @Environment(\.openWindow) private var openWindow
     @State private var expandedDeviceUID: String? = nil
+    @State private var expandedInputDeviceUID: String? = nil
     @State private var deviceToForget: OutputSelectionPreferences.KnownDeviceRecord? = nil
+    @State private var inputDeviceToForget: InputSelectionPreferences.KnownInputDeviceRecord? = nil
+    @State private var testingInputDeviceUID: String? = nil
+    @StateObject private var drawerMeter = InputMeter()
 
     private var visiblePresetsList: [EQPreset] {
         anmolAudio.visiblePresets(catalog: presetCatalog, store: presetStore)
@@ -101,6 +106,11 @@ struct DevicesSettingsView: View {
                             .padding(.vertical, 4)
                         }
                     }
+
+                    Divider()
+
+                    // Audio Inputs
+                    audioInputsSection
                 }
                 .padding(20)
             }
@@ -109,6 +119,9 @@ struct DevicesSettingsView: View {
             Divider()
 
             footer
+        }
+        .onDisappear {
+            drawerMeter.stop()
         }
         .alert(
             "Forget Device?",
@@ -131,19 +144,50 @@ struct DevicesSettingsView: View {
         } message: { dev in
             Text("Are you sure you want to forget “\(dev.name)”? All custom configuration, volume levels, and preset associations for this device will be removed.")
         }
+        .alert(
+            "Forget Input Device?",
+            isPresented: Binding(
+                get: { inputDeviceToForget != nil },
+                set: { if !$0 { inputDeviceToForget = nil } }
+            ),
+            presenting: inputDeviceToForget
+        ) { dev in
+            Button("Cancel", role: .cancel) {
+                inputDeviceToForget = nil
+            }
+            Button("Forget Device", role: .destructive) {
+                if expandedInputDeviceUID == dev.uid {
+                    expandedInputDeviceUID = nil
+                    drawerMeter.stop()
+                }
+                inputPreferences.forgetDevice(uid: dev.uid)
+                inputDeviceToForget = nil
+            }
+        } message: { dev in
+            Text("Are you sure you want to forget “\(dev.name)”? All custom configuration, volume levels, and settings for this input will be removed.")
+        }
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 12) {
             HStack(spacing: 6) {
                 Image(systemName: "speaker.wave.2")
                     .foregroundStyle(.secondary)
-                Text(deviceManager.selectedOutput.map { "Active: \($0.name)" } ?? "No output selected")
+                Text(deviceManager.selectedOutput.map { "Output: \($0.name)" } ?? "No output selected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text("•")
+                .foregroundStyle(.tertiary)
+            HStack(spacing: 6) {
+                Image(systemName: "mic")
+                    .foregroundStyle(.secondary)
+                Text(deviceManager.selectedInput.map { "Input: \($0.name)" } ?? "No input selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text("\(outputPreferences.knownDevices.count) known device\(outputPreferences.knownDevices.count == 1 ? "" : "s")")
+            Text("\(outputPreferences.knownDevices.count) out, \(inputPreferences.knownDevices.count) in")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -295,7 +339,6 @@ struct DevicesSettingsView: View {
 
     @ViewBuilder
     private func deviceConfigDrawer(for record: OutputSelectionPreferences.KnownDeviceRecord) -> some View {
-        let isConnected = deviceManager.outputDevices.contains(where: { $0.uid == record.uid })
         let isCurrentlySelected = deviceManager.selectedOutput?.uid == record.uid
 
         VStack(spacing: 12) {
@@ -677,5 +720,469 @@ struct DevicesSettingsView: View {
         }
         openWindow(id: "editor")
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    // MARK: - Audio Inputs Section
+
+    private var audioInputsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Audio Inputs")
+                    .font(.headline)
+                Spacer()
+                Text("\(inputPreferences.knownDevices.count) known")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if inputPreferences.knownDevices.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "mic.slash")
+                        .font(.largeTitle)
+                        .foregroundStyle(.tertiary)
+                    Text("No input devices recorded yet.")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 120)
+            } else {
+                HStack(spacing: 12) {
+                    Text("Input Device")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Behavior")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 120, alignment: .leading)
+                    Text("Config")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 50, alignment: .center)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 4)
+
+                VStack(spacing: 8) {
+                    ForEach(inputPreferences.knownDevices) { record in
+                        let isExpanded = (expandedInputDeviceUID == record.uid)
+                        VStack(spacing: 0) {
+                            inputDeviceRow(for: record, isExpanded: isExpanded)
+
+                            if isExpanded {
+                                Divider()
+                                inputDeviceConfigDrawer(for: record)
+                            }
+                        }
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(isExpanded ? Color(nsColor: .separatorColor).opacity(0.7) : Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+                        )
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func inputDeviceRow(for record: InputSelectionPreferences.KnownInputDeviceRecord, isExpanded: Bool) -> some View {
+        let isConnected = deviceManager.inputDevices.contains(where: { $0.uid == record.uid })
+        let isCurrentlySelected = deviceManager.selectedInput?.uid == record.uid
+        let isLidClosedCutoff = deviceManager.isLidClosed && (record.transportType == .builtIn || record.uid == "BuiltInMicrophoneDevice")
+        let effectivePolicy = inputPreferences.policy(for: record.uid) ?? record.policy
+
+        HStack(spacing: 12) {
+            Image(systemName: record.transportType == .builtIn ? "laptopcomputer" : (record.transportType == .usb ? "mic.fill" : record.transportType.systemImage))
+                .font(.system(size: 18))
+                .foregroundStyle(isCurrentlySelected ? Color.accentColor : Color.secondary)
+                .frame(width: 26)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(record.name)
+                        .font(.body.weight(.medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(record.name)
+
+                    if isCurrentlySelected {
+                        Text("Active")
+                            .font(.system(size: 10, weight: .bold))
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(Color.accentColor.opacity(0.15))
+                            .foregroundStyle(Color.accentColor)
+                            .clipShape(Capsule())
+                            .fixedSize()
+                            .layoutPriority(1)
+                    } else if isLidClosedCutoff {
+                        Text("Lid closed")
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(Color.secondary.opacity(0.15))
+                            .foregroundStyle(.secondary)
+                            .clipShape(Capsule())
+                            .fixedSize()
+                            .layoutPriority(1)
+                    } else if isConnected {
+                        Text("Connected")
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1.5)
+                            .background(Color.green.opacity(0.15))
+                            .foregroundStyle(.green)
+                            .clipShape(Capsule())
+                            .fixedSize()
+                            .layoutPriority(1)
+                    }
+                }
+
+                Text(record.transportType.displayName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Auto-switch Policy Picker
+            Picker("", selection: Binding(
+                get: { effectivePolicy },
+                set: { newPolicy in
+                    inputPreferences.setPolicy(newPolicy, for: record.uid)
+                    deviceManager.refresh(initial: false)
+                }
+            )) {
+                ForEach(InputSelectionPreferences.DevicePolicy.allCases) { policy in
+                    Text(policy.title).tag(policy)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 120)
+
+            Button {
+                if isExpanded {
+                    expandedInputDeviceUID = nil
+                    drawerMeter.stop()
+                    testingInputDeviceUID = nil
+                } else {
+                    expandedInputDeviceUID = record.uid
+                    drawerMeter.stop()
+                    testingInputDeviceUID = nil
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 11))
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                .foregroundStyle(isExpanded ? Color.primary : Color.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(isExpanded ? Color.secondary.opacity(0.15) : Color(nsColor: .controlBackgroundColor).opacity(0.6))
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Close settings for \(record.name)" : "Configure \(record.name)")
+            .frame(width: 50, alignment: .center)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .contextMenu {
+            if record.transportType != .builtIn && !isCurrentlySelected {
+                Button(role: .destructive) {
+                    inputDeviceToForget = record
+                } label: {
+                    Label("Forget Device", systemImage: "trash")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func inputDeviceConfigDrawer(for record: InputSelectionPreferences.KnownInputDeviceRecord) -> some View {
+        let activeDevice = deviceManager.inputDevices.first(where: { $0.uid == record.uid })
+
+        VStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 24) {
+                // Left Column: Gain, Volume Memory, Ceiling & Sample Rate
+                VStack(alignment: .leading, spacing: 14) {
+                    // Gain & Volume Memory
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Gain & Volume")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        let currentGain = activeDevice.flatMap { CoreAudioInputVolume.scalar(for: $0.id) }
+                            ?? inputPreferences.lastVolume(for: record.uid)
+                            ?? 1.0
+
+                        HStack(spacing: 8) {
+                            Text("Gain")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 44, alignment: .leading)
+                            Slider(
+                                value: Binding(
+                                    get: { Double(currentGain) },
+                                    set: { newVal in
+                                        let clamped = Float(newVal)
+                                        if let dev = activeDevice {
+                                            CoreAudioInputVolume.setScalar(clamped, for: dev.id)
+                                        }
+                                        inputPreferences.setLastVolume(clamped, for: record.uid)
+                                    }
+                                ),
+                                in: 0.0...1.0
+                            )
+                            .frame(maxWidth: .infinity)
+                            Text("\(Int(round(currentGain * 100)))%")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 38, alignment: .trailing)
+                        }
+
+                        Toggle("Remember input volume for this device", isOn: Binding(
+                            get: { inputPreferences.rememberVolume(for: record.uid) },
+                            set: { inputPreferences.setRememberVolume($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Restores hardware input volume automatically when this microphone connects.")
+                    }
+
+                    Divider()
+
+                    // Peak Clipping Ceiling
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Peak Clipping Ceiling")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Toggle("Enforce", isOn: Binding(
+                                get: { inputPreferences.enforceVolumeLimit(for: record.uid) },
+                                set: { inputPreferences.setEnforceVolumeLimit($0, for: record.uid) }
+                            ))
+                            .toggleStyle(.switch)
+                            .controlSize(.mini)
+                        }
+
+                        let isEnforced = inputPreferences.enforceVolumeLimit(for: record.uid)
+                        let maxLimit = inputPreferences.maxVolumeLimit(for: record.uid)
+
+                        HStack(spacing: 8) {
+                            Text("Ceiling")
+                                .font(.caption)
+                                .foregroundStyle(isEnforced ? .primary : .secondary)
+                                .frame(width: 44, alignment: .leading)
+                            Slider(
+                                value: Binding(
+                                    get: { Double(maxLimit) },
+                                    set: { inputPreferences.setMaxVolumeLimit(Float($0), for: record.uid) }
+                                ),
+                                in: 0.15...1.0,
+                                step: 0.05
+                            )
+                            .frame(maxWidth: .infinity)
+                            .disabled(!isEnforced)
+                            Text("\(Int(round(maxLimit * 100)))%")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(isEnforced ? .primary : .secondary)
+                                .frame(width: 38, alignment: .trailing)
+                        }
+
+                        Text("Caps maximum input volume to protect against microphone distortion and peak clipping.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    // Hardware Sample Rate
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Hardware Sample Rate")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        if let dev = activeDevice {
+                            let currentRate = CoreAudioInputVolume.nominalSampleRate(for: dev.id) ?? 48000.0
+                            let availableRates = CoreAudioInputVolume.availableSampleRates(for: dev.id)
+
+                            if availableRates.count > 1 {
+                                HStack(spacing: 8) {
+                                    Text("Sample Rate")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Picker("", selection: Binding(
+                                        get: { currentRate },
+                                        set: { newRate in
+                                            CoreAudioInputVolume.setNominalSampleRate(newRate, for: dev.id)
+                                        }
+                                    )) {
+                                        ForEach(availableRates, id: \.self) { rate in
+                                            Text(String(format: "%.0f Hz", rate)).tag(rate)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .pickerStyle(.menu)
+                                    .fixedSize()
+                                }
+                            } else {
+                                Text("Format: \(Int(currentRate)) Hz (fixed)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("Connect device to view sample rate.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Right Column: Calls, Ducking, Mono Summing & Live Test Meter
+                VStack(alignment: .leading, spacing: 14) {
+                    // Calls & Ducking
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Calls & Ducking")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Trigger AEC Call Bypass", isOn: Binding(
+                            get: { inputPreferences.triggerAECBypass(for: record.uid) },
+                            set: { inputPreferences.setTriggerAECBypass($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("When this microphone becomes active, triggers AEC surgical call bypass so echo cancellation is preserved.")
+
+                        Toggle("Background audio ducking", isOn: Binding(
+                            get: { inputPreferences.backgroundAudioDucking(for: record.uid) },
+                            set: { inputPreferences.setBackgroundAudioDucking($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Ducks background music by -12 dB when this microphone stream is in use.")
+                    }
+
+                    Divider()
+
+                    // Channel Routing
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Channel Routing")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Mono summing (L+R)", isOn: Binding(
+                            get: { inputPreferences.monoSumming(for: record.uid) },
+                            set: { inputPreferences.setMonoSumming($0, for: record.uid) }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .help("Downmixes single-channel or stereo mic inputs to mono so audio is heard in both ears across all apps.")
+                    }
+
+                    Divider()
+
+                    // Live Test Level Meter
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Live Test Level Meter")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                if testingInputDeviceUID == record.uid {
+                                    testingInputDeviceUID = nil
+                                    drawerMeter.stop()
+                                } else {
+                                    testingInputDeviceUID = record.uid
+                                    if let dev = activeDevice {
+                                        drawerMeter.start(deviceID: dev.id)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: testingInputDeviceUID == record.uid ? "stop.fill" : "mic.fill")
+                                        .font(.system(size: 9))
+                                    Text(testingInputDeviceUID == record.uid ? "Stop" : "Test")
+                                        .font(.caption2.weight(.medium))
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .help(testingInputDeviceUID == record.uid ? "Stop live microphone test" : "Test microphone level (captures input only while active)")
+                        }
+
+                        let isTesting = (testingInputDeviceUID == record.uid)
+                        let displayLevel = isTesting ? drawerMeter.level : 0.0
+
+                        HStack(spacing: 8) {
+                            Image(systemName: isTesting ? "mic.fill" : "mic")
+                                .font(.caption)
+                                .foregroundStyle(displayLevel > 0.05 ? Color.accentColor : Color.secondary)
+
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Color(nsColor: .separatorColor).opacity(0.3))
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(
+                                            displayLevel > 0.85
+                                                ? Color.red
+                                                : (displayLevel > 0.65 ? Color.orange : Color.green)
+                                        )
+                                        .frame(width: max(0, min(geo.size.width, geo.size.width * CGFloat(displayLevel))))
+                                        .animation(.linear(duration: 0.08), value: displayLevel)
+                                }
+                            }
+                            .frame(height: 8)
+
+                            Text("\(Int(round(displayLevel * 100)))%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 34, alignment: .trailing)
+                        }
+
+                        if drawerMeter.isPermissionDenied {
+                            Text("Microphone permission denied. Enable in System Settings > Privacy & Security > Microphone.")
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                        } else {
+                            Text(isTesting ? "Listening... Speak to test level." : "Click Test to measure input responsiveness without unsolicited privacy alerts.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            Color(nsColor: NSColor(name: nil, dynamicProvider: { appearance in
+                if appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua {
+                    return NSColor(white: 0.16, alpha: 1.0)
+                } else {
+                    return NSColor(white: 0.93, alpha: 1.0)
+                }
+            }))
+        )
+        .onDisappear {
+            drawerMeter.stop()
+            testingInputDeviceUID = nil
+        }
     }
 }

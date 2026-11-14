@@ -11,6 +11,7 @@ struct SettingsView: View {
     @ObservedObject var devicePresetMemory: DevicePresetMemory
     @ObservedObject var excludedAppsStore: ExcludedAppsStore
     @ObservedObject var outputPreferences: OutputSelectionPreferences
+    @ObservedObject var inputPreferences: InputSelectionPreferences
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var engine: EQEngine
@@ -23,6 +24,7 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsTab(
                 outputPreferences: outputPreferences,
+                inputPreferences: inputPreferences,
                 burnInTracker: burnInTracker,
                 deviceManager: deviceManager,
                 engine: engine
@@ -31,6 +33,7 @@ struct SettingsView: View {
 
             DevicesSettingsView(
                 outputPreferences: outputPreferences,
+                inputPreferences: inputPreferences,
                 deviceManager: deviceManager,
                 devicePresetMemory: devicePresetMemory,
                 presetStore: presetStore,
@@ -77,6 +80,7 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @ObservedObject var outputPreferences: OutputSelectionPreferences
+    @ObservedObject var inputPreferences: InputSelectionPreferences
     @ObservedObject var burnInTracker: BurnInTracker
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var engine: EQEngine
@@ -106,7 +110,7 @@ private struct GeneralSettingsTab: View {
                     Divider()
 
                     HStack {
-                        Text("When devices change")
+                        Text("When output devices change")
                         Spacer()
                         Picker("", selection: Binding(
                             get: { outputPreferences.switchPolicy },
@@ -120,6 +124,25 @@ private struct GeneralSettingsTab: View {
                         .pickerStyle(.menu)
                         .fixedSize()
                         .help("How anmolAudio reacts when an output device connects or the system default changes")
+                    }
+
+                    Divider()
+
+                    HStack {
+                        Text("When input devices change")
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { inputPreferences.switchPolicy },
+                            set: { inputPreferences.switchPolicy = $0 }
+                        )) {
+                            ForEach(InputSelectionPreferences.SwitchPolicy.allCases) { policy in
+                                Text(policy.title).tag(policy)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                        .help("How anmolAudio reacts when a microphone or audio input connects or the system default changes")
                     }
 
                     Divider()
